@@ -1,7 +1,6 @@
 'use strict';
 
 let ccxt = require('ccxt'),
-  chartjs = require('chartjs-node'),
   app = require('express')(),
   express = require('express'),
   exphbs  = require('express-handlebars'),
@@ -23,7 +22,7 @@ const VOL_SPIKE_THRESHOLD = 1.37,
   EXCHANGES = {
     BITTREX: 0
   },
-  EXCHANGES_VOLUME_UNIT_INTERVALS = [ 60*60*24 ]; //when data is polled, this is the volume unit returned
+  EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ]; //when data is polled, this is the volume unit returned
 
 mongo_client.connect(url, (err, data) => {
     if (err) error(err);

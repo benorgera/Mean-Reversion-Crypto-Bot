@@ -5,7 +5,6 @@
   "main": "main.js",
   "dependencies": {
     "ccxt": "^1.10.534",
-    "chart.js": "^2.7.1",
     "chartjs-node": "^1.6.0",
     "express": "^4.16.2",
     "express-handlebars": "^3.0.0",
