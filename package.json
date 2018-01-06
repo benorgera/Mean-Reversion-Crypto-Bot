@@ -1,0 +1,36 @@
+{
+  "name": "coinbull",
+  "version": "1.0.0",
+  "description": "Algorithmically trading altcoins since they were hyped up",
+  "main": "main.js",
+  "dependencies": {
+    "ccxt": "^1.10.534",
+    "chart.js": "^2.7.1",
+    "chartjs-node": "^1.6.0",
+    "express": "^4.16.2",
+    "express-handlebars": "^3.0.0",
+    "heartbeats": "^5.0.1",
+    "log": "^1.4.0",
+    "mongodb": "^3.0.1",
+    "request": "^2.83.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "node main.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@gitlab.com/benorgera/CoinBull.git"
+  },
+  "keywords": [
+    "altcoin",
+    "crypto",
+    "bitcoin"
+  ],
+  "author": "Ben Orgera",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://gitlab.com/benorgera/CoinBull/issues"
+  },
+  "homepage": "https://gitlab.com/benorgera/CoinBull#README"
+}
