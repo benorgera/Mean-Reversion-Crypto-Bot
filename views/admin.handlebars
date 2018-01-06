@@ -1,0 +1,99 @@
+<html>
+<head>
+        <title>CoinBull</title>
+</head>
+<body>
+        <canvas id="c"></canvas>
+</body>
+<script src="http://localhost:4000/momentum.min.js"></script>
+<script src="http://localhost:4000/chart_dist/Chart.js"></script>
+<script type="text/javascript">
+
+
+var c = document.getElementById('c');
+
+c.width = window.innerWidth;
+c.height = window.innerHeight;
+
+var	ctx = c.getContext('2d'),
+  debug = JSON.parse('{{{ debug }}}'),
+  color = Chart.helpers.color;
+console.log(color);
+
+
+debug.vol_ticks.backgroundColor = '#e1f7d5';
+debug.vol_ticks.borderColor = '#e1f7d5';
+debug.vol_avgs_over_period.backgroundColor = '#ffbdbd';
+debug.vol_avgs_over_period.borderColor = '#ffbdbd';
+debug.vols_over_unit_interval.backgroundColor = '#f1cbff';
+debug.vols_over_unit_interval.borderColor = '#f1cbff';
+debug.prices.backgroundColor = '#bae1ff';
+debug.prices.borderColor = '#bae1ff'
+debug.mean_prices.backgroundColor = '#ffdfba';
+debug.mean_prices.borderColor = '#ffdfba';
+
+	options = {
+		title: {
+			text: debug.name,
+        },
+        elements: { point: { radius: 0, hitRadius: 3.5, hoverRadius: 3.5 } },
+        animation: false,
+        scales: {
+            xAxes: [{
+                type: 'time',
+                time: {
+                	displayFormats: {
+                        'millisecond': 'MMM DD',
+                        'second': 'MMM DD',
+                        'minute': 'MMM DD',
+                        'hour': 'MMM DD',
+                        'day': 'MMM DD',
+                        'week': 'MMM DD',
+                        'month': 'MMM DD',
+                        'quarter': 'MMM DD',
+                        'year': 'MMM DD'
+                    }
+	            }
+	        }],
+	        yAxes: [{
+	        	id: 'vol',
+	        	type: 'linear',
+	        	position: 'right',
+	        },
+	        {
+	        	id: 'price',
+	        	type: 'linear',
+	        	position: 'left',
+	        }]
+	    }
+    },
+    config = {
+        type: 'line',
+        data: {
+        	datasets: [
+              debug.vol_ticks,
+              debug.vol_avgs_over_period,
+              debug.vols_over_unit_interval,
+              debug.prices,
+              debug.mean_prices
+            ]
+        },
+        options: options
+    };
+
+window.myLine = new Chart(ctx, config);
+
+window.addEventListener('resize', function() {
+	c.width = window.innerWidth;
+	c.height = window.innerHeight;
+});
+
+</script>
+<style type="text/css">
+	body {
+		width:  100%;
+		height: 100%;
+		margin: 0;
+	}
+</style>
+</htmls
