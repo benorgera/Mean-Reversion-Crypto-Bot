@@ -71,6 +71,7 @@ app.get('/admin', (req, res) => {
 
 app.post('/admin/simulate', (req, res) => {
     console.log(req.body);
+    
 });
 
 app.listen(4000);
@@ -83,8 +84,9 @@ function startup_bot() {
         verbose: false
     }));
 
+    new_market('NEO/BTC', EXCHANGES.BITTREX);
     //new_market('ETH/BTC', EXCHANGES.BITTREX);
-    new_market('BITB/BTC', EXCHANGES.BITTREX);
+    //new_market('SC/BTC', EXCHANGES.BITTREX);
     // new_market('GNT/BTC', EXCHANGES.BITTREX);
     // new_market('STORJ/BTC', EXCHANGES.BITTREX);
     // new_market('DOPE/BTC', EXCHANGES.BITTREX);
