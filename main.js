@@ -2,6 +2,7 @@
 
 let ccxt = require('ccxt'),
   app = require('express')(),
+  body_parser = require('body-parser'),
   express = require('express'),
   exphbs  = require('express-handlebars'),
   heartbeats = require('heartbeats'),
@@ -13,10 +14,24 @@ let ccxt = require('ccxt'),
   markets = [],
   exchanges = [],
   fs = require('fs'),
-  log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log'));
+  log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
+  OPTIONS = {
+    VOL_SPIKE_THRESHOLD: 1.37,
+    FIRST_SELL_CUTOFF: {
+        gain: 0.1,
+        sell: 0.3
+    },
+    SECOND_SELL_CUTOFF: {
+        gain: 0.5,
+        sell: 0.6
+    },
+    BUY_CUTOFF: {
+        drop: 0.15,
+        buy: 0.4 
+    }
+  };
 
-const VOL_SPIKE_THRESHOLD = 1.37,
-  MEAN_AND_VOLUME_PERIOD = 60*60*24*14, //moving averages are over 2 weeks
+const MEAN_AND_VOLUME_PERIOD = 60*60*24*14, //moving averages are over 2 weeks
   VOLUME_UNIT_INTERVAL = 60*60*24, //volume is stored over one day
   POLL_INTERVAL = 2,  //update once every 2 seconds
   EXCHANGES = {
@@ -32,6 +47,7 @@ mongo_client.connect(url, (err, data) => {
     startup_bot();
 });
 
+app.use(body_parser.json());
 app.use(express.static('static'));
 
 app.engine('handlebars', exphbs({
@@ -49,109 +65,15 @@ app.get('/admin', (req, res) => {
         return error('Invalid debug data request');
 
     get_debug_data(market_index, (data) => {
-        res.render('admin', { debug: JSON.stringify(data) });
+        res.render('admin', { debug: JSON.stringify(data), OPTIONS: JSON.stringify(OPTIONS) });
     });
 });
 
+app.post('/admin/simulate', (req, res) => {
+    console.log(req.body);
+});
+
 app.listen(4000);
-
-function add_debug_point(data, db_entry) {
-
-    data.vol_ticks.data.push({
-        x: db_entry.time,
-        y: db_entry.raw_vol
-    });
-
-    data.vol_avgs_over_period.data.push({
-        x: db_entry.time,
-        y: db_entry.vol_avg
-    });
-
-    data.vols_over_unit_interval.data.push({
-        x: db_entry.time,
-        y: db_entry.vol_unit
-    });
-
-    data.prices.data.push({
-        x: db_entry.time,
-        y: db_entry.price
-    });
-
-    data.mean_prices.data.push({
-        x: db_entry.time,
-        y: db_entry.steady_mean
-    });
-}
-
-function get_debug_data(market_index, callback) {
-    var data = {};
-
-    data.name = markets[market_index].name;
-
-    data.vol_ticks = {
-        label: 'Raw Volume Tick',
-        fill: false,
-        yAxisID: 'price',
-        data: []
-    };
-    
-    data.vols_over_unit_interval = {
-        label: 'Volume Over Unit Interval',
-        fill: false,
-        yAxisID: 'vol',
-        data: []
-    };
-    
-    data.vol_avgs_over_period = {
-        label: 'Volume Average Over Entire Period',
-        fill: false,
-        yAxisID: 'vol',
-        data: []
-    };
-    
-    data.prices = {
-        label: 'Price',
-        fill: false,
-        yAxisID: 'price',
-        data: []
-    };
-    
-    data.mean_prices = {
-        label: 'Steady Mean',
-        fill: false,
-        yAxisID: 'price',
-        data: []
-    };
-    
-
-    db.collection(markets[market_index].name).find({}).sort({ time: 1 }).toArray((err, arr) => {
-
-        if (err) return error(err);
-
-        arr.forEach((entry) => {
-            if (!entry.steady_mean || !entry.price || !entry.raw_vol || !entry.vol_avg || !entry.vol_unit)
-                error('Corrupt db entry: ' + JSON.stringify(entry));
-            else 
-                add_debug_point(data, entry, market_index);
-        });
-
-        callback(data);
-    });
-}
-
-function new_market(name, exchange) {
-    var res = {};
-    res.name = name;
-    res.exchange = exchange;
-    markets.push(res);
-}
-
-async function test() {
-    //await exchanges[0].loadMarkets();
-    console.log(await exchanges[0].fetchBalance());
-    console.log(exchanges[0].markets);
-    console.log(await exchanges[0].fetchTicker(markets[0].name));
-}
 
 function startup_bot() {
 
@@ -269,7 +191,7 @@ function load_historical_markets(callback) {
                         res.vol_unit = vol_sum_24_hr; //base volume is volume in btc, this is moving average over 24 hrs
                         res.vol_avg = vol_sum_2_weeks / vol_count;
                         res.steady_mean = mean_sum / mean_count;
-                        res.is_steady = res.vol_unit <= VOL_SPIKE_THRESHOLD * res.vol_avg;
+                        res.is_steady = res.vol_unit <= OPTIONS.VOL_SPIKE_THRESHOLD * res.vol_avg;
                         res.time = time;
                         res.h = true; //historical data, so poll interval is tick_interval, not INTERVAL
     
@@ -301,6 +223,73 @@ function load_historical_markets(callback) {
                 if (num_loaded == markets.length) callback();
         });
     });
+}
+
+function add_debug_point(data, db_entry) {
+
+    data.vol_ticks.push({
+        x: db_entry.time,
+        y: db_entry.raw_vol
+    });
+
+    data.vol_avgs_over_period.push({
+        x: db_entry.time,
+        y: db_entry.vol_avg
+    });
+
+    data.vols_over_unit_interval.push({
+        x: db_entry.time,
+        y: db_entry.vol_unit
+    });
+
+    data.price.push({
+        x: db_entry.time,
+        y: db_entry.price
+    });
+
+    data.steady_mean.push({
+        x: db_entry.time,
+        y: db_entry.steady_mean
+    });
+}
+
+function get_debug_data(market_index, callback) {
+    var data = {
+        vol_ticks: [],
+        vols_over_unit_interval: [],
+        vol_avgs_over_period: [],
+        price: [],
+        steady_mean: [],
+        name: markets[market_index].name
+    };  
+
+    db.collection(markets[market_index].name).find({}).sort({ time: 1 }).toArray((err, arr) => {
+
+        if (err) return error(err);
+
+        arr.forEach((entry) => {
+            if (!entry.steady_mean || !entry.price || !entry.raw_vol || !entry.vol_avg || !entry.vol_unit)
+                error('Corrupt db entry: ' + JSON.stringify(entry));
+            else 
+                add_debug_point(data, entry, market_index);
+        });
+
+        callback(data);
+    });
+}
+
+function new_market(name, exchange) {
+    var res = {};
+    res.name = name;
+    res.exchange = exchange;
+    markets.push(res);
+}
+
+async function test() {
+    //await exchanges[0].loadMarkets();
+    console.log(await exchanges[0].fetchBalance());
+    console.log(exchanges[0].markets);
+    console.log(await exchanges[0].fetchTicker(markets[0].name));
 }
 
 function log_(msg) {

@@ -3,46 +3,77 @@
         <title>CoinBull</title>
 </head>
 <body>
+    <div id="cd">
         <canvas id="c"></canvas>
+    </div>
+    <div id="dd">
+        <canvas id="d"></canvas>
+    </div>
+    <form id="options" action="javascript:void(0);" class="form-inline" onsubmit="return simulate()">
+      <div class="form-group">
+        <label class="space" for="buy_cutoff">Buy:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_cutoff">
+        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_cutoff_">
+      </div>
+      <div class="form-group">
+        <label class="space" for="sell_cutoff_0">First Sell:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_0">
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_0_">
+        <label class="space" for="sell_cutoff_1">Second Sell:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_1">
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_1_">
+      </div>
+      <button class="btn btn-primary space">Simulate Options</button>
+    </form>
+    </div>
 </body>
 <script src="http://localhost:4000/momentum.min.js"></script>
 <script src="http://localhost:4000/chart_dist/Chart.js"></script>
 <script type="text/javascript">
 
-
-var c = document.getElementById('c');
-
-c.width = window.innerWidth;
-c.height = window.innerHeight;
-
-var	ctx = c.getContext('2d'),
+var c = document.getElementById('c'),
+  d = document.getElementById('d'),
+  ctx = c.getContext('2d'),
+  dtx = d.getContext('2d'),
+  OPTIONS = JSON.parse('{{{ OPTIONS }}}'),
   debug = JSON.parse('{{{ debug }}}'),
-  color = Chart.helpers.color;
-console.log(color);
-
-
-debug.vol_ticks.backgroundColor = '#e1f7d5';
-debug.vol_ticks.borderColor = '#e1f7d5';
-debug.vol_avgs_over_period.backgroundColor = '#ffbdbd';
-debug.vol_avgs_over_period.borderColor = '#ffbdbd';
-debug.vols_over_unit_interval.backgroundColor = '#f1cbff';
-debug.vols_over_unit_interval.borderColor = '#f1cbff';
-debug.prices.backgroundColor = '#bae1ff';
-debug.prices.borderColor = '#bae1ff'
-debug.mean_prices.backgroundColor = '#ffdfba';
-debug.mean_prices.borderColor = '#ffdfba';
-
-	options = {
-		title: {
-			text: debug.name,
-        },
+  config_d = {
+    type: 'line',
+    data: {
+        datasets: [{
+            label: 'Volume Over Unit Interval',
+            fill: false,
+            yAxisID: 'unit_vol',
+            backgroundColor: '#f1cbff',
+            borderColor: '#f1cbff',
+            data: debug.vols_over_unit_interval
+        }, {
+            label: 'Volume Average Over Entire Period',
+            fill: false,
+            yAxisID: 'unit_vol',
+            backgroundColor: '#ffbdbd',
+            borderColor: '#ffbdbd',
+            data: debug.vol_avgs_over_period
+        }, {
+            label: 'Raw Volume Tick',
+            fill: false,
+            yAxisID: 'tick_vol',
+            backgroundColor: '#e1f7d5',
+            borderColor: '#e1f7d5',
+            hidden: true,
+            data: debug.vol_ticks
+        }]
+    },
+    options: {
         elements: { point: { radius: 0, hitRadius: 3.5, hoverRadius: 3.5 } },
         animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
         scales: {
             xAxes: [{
                 type: 'time',
                 time: {
-                	displayFormats: {
+                    displayFormats: {
                         'millisecond': 'MMM DD',
                         'second': 'MMM DD',
                         'minute': 'MMM DD',
@@ -53,47 +84,133 @@ debug.mean_prices.borderColor = '#ffdfba';
                         'quarter': 'MMM DD',
                         'year': 'MMM DD'
                     }
-	            }
-	        }],
-	        yAxes: [{
-	        	id: 'vol',
-	        	type: 'linear',
-	        	position: 'right',
-	        },
-	        {
-	        	id: 'price',
-	        	type: 'linear',
-	        	position: 'left',
-	        }]
-	    }
+                }
+            }],
+            yAxes: [{
+                id: 'tick_vol',
+                type: 'linear',
+                position: 'right',
+                display: false
+            },
+            {
+                id: 'unit_vol',
+                type: 'linear',
+                position: 'left',
+                scaleLabel: {
+                    display: true,
+                    labelString: 'Volume BTC'
+                },
+            }]
+        }
+    }
+  },
+  config_c = {
+    type: 'line',
+    data: {
+        datasets: [{
+            label: 'Price',
+            fill: false,
+            backgroundColor: '#bae1ff',
+            borderColor: '#bae1ff',
+            data: debug.price
+        }, {
+            label: 'Steady Mean',
+            fill: false,
+            backgroundColor: '#ffdfba',
+            borderColor: '#ffdfba',
+            data: debug.steady_mean
+        }]
     },
-    config = {
-        type: 'line',
-        data: {
-        	datasets: [
-              debug.vol_ticks,
-              debug.vol_avgs_over_period,
-              debug.vols_over_unit_interval,
-              debug.prices,
-              debug.mean_prices
-            ]
-        },
-        options: options
-    };
+    options: {
+        elements: { point: { radius: 0, hitRadius: 3.5, hoverRadius: 3.5 } },
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+            xAxes: [{
+                type: 'time',
+                time: {
+                    displayFormats: {
+                        'millisecond': 'MMM DD',
+                        'second': 'MMM DD',
+                        'minute': 'MMM DD',
+                        'hour': 'MMM DD',
+                        'day': 'MMM DD',
+                        'week': 'MMM DD',
+                        'month': 'MMM DD',
+                        'quarter': 'MMM DD',
+                        'year': 'MMM DD'
+                    }
+                }
+            }],
+            yAxes: [{
+                scaleLabel: {
+                    display: true,
+                    labelString: 'Price BTC'
+                }
+            }]
+        }
+    }
+  };
 
-window.myLine = new Chart(ctx, config);
+window.prices = new Chart(ctx, config_c);
+window.volume = new Chart(dtx, config_d);
 
-window.addEventListener('resize', function() {
-	c.width = window.innerWidth;
-	c.height = window.innerHeight;
-});
+document.getElementById('sell_cutoff_0').value = OPTIONS.FIRST_SELL_CUTOFF.gain;
+document.getElementById('sell_cutoff_0_').value = OPTIONS.FIRST_SELL_CUTOFF.sell;
+document.getElementById('sell_cutoff_1').value = OPTIONS.SECOND_SELL_CUTOFF.gain;
+document.getElementById('sell_cutoff_1_').value = OPTIONS.SECOND_SELL_CUTOFF.sell;
+document.getElementById('buy_cutoff').value = OPTIONS.BUY_CUTOFF.drop;
+document.getElementById('buy_cutoff_').value = OPTIONS.BUY_CUTOFF.buy;
+
+function simulate() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'http://localhost:4000/admin/simulate', true);
+    xhr.setRequestHeader('Content-Type', 'application/json; charset=UTF-8');
+
+    OPTIONS.FIRST_SELL_CUTOFF.gain = document.getElementById('sell_cutoff_0').value;
+    OPTIONS.FIRST_SELL_CUTOFF.sell = document.getElementById('sell_cutoff_0_').value;
+    OPTIONS.SECOND_SELL_CUTOFF.gain = document.getElementById('sell_cutoff_1').value;
+    OPTIONS.SECOND_SELL_CUTOFF.sell = document.getElementById('sell_cutoff_1_').value;
+    OPTIONS.BUY_CUTOFF.drop = document.getElementById('buy_cutoff').value;
+    OPTIONS.BUY_CUTOFF.buy = document.getElementById('buy_cutoff_').value;  
+
+    xhr.send(JSON.stringify(OPTIONS));
+    console.log('sent simulation options');
+}
 
 </script>
 <style type="text/css">
-	body {
-		width:  100%;
-		height: 100%;
-		margin: 0;
-	}
+    body {
+        width:  100%;
+        height: 100%;
+        margin: 0;
+    }
+
+    #options {
+        height: 4%;
+        margin: 1em;
+        margin-bottom: 0;
+        text-align: center;
+    }
+
+    #dd {
+        width: 100%;
+        height: 30%;
+    }
+
+    #cd {
+        width: 100%;
+        height: 60%;
+    }
+
+    .space {
+        margin-left: 1em;
+    }
+
+    input {
+        width: 5em !important;
+    }
 </style>
-</htmls
+<link rel="stylesheet" href="http://localhost:4000/bootstrap.min.css">
+</html>
