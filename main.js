@@ -1,9 +1,9 @@
 'use strict';
 
 let ccxt = require('ccxt'),
-  app = require('express')(),
-  body_parser = require('body-parser'),
   express = require('express'),
+  app = express(),
+  body_parser = require('body-parser'),
   exphbs  = require('express-handlebars'),
   heartbeats = require('heartbeats'),
   request = require('request'),
