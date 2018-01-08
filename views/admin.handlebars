@@ -1,29 +1,40 @@
 <html>
 <head>
-        <title>CoinBull</title>
+        <title id="title">CoinBull: {{debug.name}}</title>
 </head>
 <body>
+    <div id="success" class="alert alert-success center-block"><strong>Recalculated Successfully</strong></div>
     <div id="cd">
         <canvas id="c"></canvas>
     </div>
     <div id="dd">
         <canvas id="d"></canvas>
     </div>
-    <form id="options" action="javascript:void(0);" class="form-inline" onsubmit="return simulate()">
+    <form action="javascript:void(0);" class="form-inline options" onsubmit="return recalculate()">
       <div class="form-group">
-        <label class="space" for="buy_cutoff">Buy:</label>
-        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_cutoff">
-        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_cutoff_">
+        <label for="vol_spike">Vol Spike:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="vol_spike" required>
+      </div>
+      <button class="btn btn-primary space">Recalc</button>
+    <form action="javascript:void(0);" class="form-inline options" onsubmit="return simulate()">
+      <div class="form-group">
+        <label class="space" for="buy_0">Buy 1:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_0" required>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_0_" required>
+        <label for="buy_1">Buy 2:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="buy_1" required>
       </div>
       <div class="form-group">
-        <label class="space" for="sell_cutoff_0">First Sell:</label>
-        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_0">
-        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_0_">
-        <label class="space" for="sell_cutoff_1">Second Sell:</label>
-        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_1">
-        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_cutoff_1_">
+        <label class="space" for="sell_0">Sell 1:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_0" required>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_0_" required>
+        <label class="space" for="sell_1">Sell 2:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_1" required>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_1_" required>
+        <label class="space" for="sell_2">Sell 3:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control" id="sell_2" required>
       </div>
-      <button class="btn btn-primary space">Simulate Options</button>
+      <button class="btn btn-primary space">Simulate</button>
     </form>
     </div>
 </body>
@@ -35,74 +46,76 @@ var c = document.getElementById('c'),
   d = document.getElementById('d'),
   ctx = c.getContext('2d'),
   dtx = d.getContext('2d'),
-  OPTIONS = JSON.parse('{{{ OPTIONS }}}'),
+  SETTINGS = JSON.parse('{{{ SETTINGS }}}'),
   debug = JSON.parse('{{{ debug }}}'),
+  market_index,
+  display_formats = {
+      millisecond: 'MMM DD',
+      second: 'MMM DD',
+      minute: 'MMM DD',
+      hour: 'MMM DD',
+      day: 'MMM DD',
+      week: 'MMM DD',
+      month: 'MMM DD',
+      quarter: 'MMM DD',
+      year: 'MMM DD'
+  },
   config_d = {
-    type: 'line',
-    data: {
-        datasets: [{
-            label: 'Volume Over Unit Interval',
-            fill: false,
-            yAxisID: 'unit_vol',
-            backgroundColor: '#f1cbff',
-            borderColor: '#f1cbff',
-            data: debug.vols_over_unit_interval
-        }, {
-            label: 'Volume Average Over Entire Period',
-            fill: false,
-            yAxisID: 'unit_vol',
-            backgroundColor: '#ffbdbd',
-            borderColor: '#ffbdbd',
-            data: debug.vol_avgs_over_period
-        }, {
-            label: 'Raw Volume Tick',
-            fill: false,
-            yAxisID: 'tick_vol',
-            backgroundColor: '#e1f7d5',
-            borderColor: '#e1f7d5',
-            hidden: true,
-            data: debug.vol_ticks
-        }]
-    },
-    options: {
-        elements: { point: { radius: 0, hitRadius: 3.5, hoverRadius: 3.5 } },
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            xAxes: [{
-                type: 'time',
-                time: {
-                    displayFormats: {
-                        'millisecond': 'MMM DD',
-                        'second': 'MMM DD',
-                        'minute': 'MMM DD',
-                        'hour': 'MMM DD',
-                        'day': 'MMM DD',
-                        'week': 'MMM DD',
-                        'month': 'MMM DD',
-                        'quarter': 'MMM DD',
-                        'year': 'MMM DD'
-                    }
-                }
-            }],
-            yAxes: [{
-                id: 'tick_vol',
-                type: 'linear',
-                position: 'right',
-                display: false
-            },
-            {
-                id: 'unit_vol',
-                type: 'linear',
-                position: 'left',
-                scaleLabel: {
-                    display: true,
-                    labelString: 'Volume BTC'
-                },
-            }]
-        }
-    }
+      type: 'line',
+      data: {
+          datasets: [{
+              label: 'Volume Over Unit Interval',
+              fill: false,
+              yAxisID: 'unit_vol',
+              backgroundColor: '#f1cbff',
+              borderColor: '#f1cbff',
+              data: debug.vols_over_unit_interval
+          }, {
+              label: 'Volume Average Over Entire Period',
+              fill: false,
+              yAxisID: 'unit_vol',
+              backgroundColor: '#ffbdbd',
+              borderColor: '#ffbdbd',
+              data: debug.vol_avgs_over_period
+          }, {
+              label: 'Raw Volume Tick',
+              fill: false,
+              yAxisID: 'tick_vol',
+              backgroundColor: '#e1f7d5',
+              borderColor: '#e1f7d5',
+              hidden: true,
+              data: debug.vol_ticks
+          }]
+      },
+      options: {
+          elements: { point: { radius: 0, hitRadius: 3.5, hoverRadius: 3.5 } },
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+              xAxes: [{
+                  type: 'time',
+                  time: {
+                      displayFormats: display_formats
+                  }
+              }],
+              yAxes: [{
+                  id: 'tick_vol',
+                  type: 'linear',
+                  position: 'right',
+                  display: false
+              },
+              {
+                  id: 'unit_vol',
+                  type: 'linear',
+                  position: 'left',
+                  scaleLabel: {
+                      display: true,
+                      labelString: 'Volume BTC'
+                  },
+              }]
+          }
+      }
   },
   config_c = {
     type: 'line',
@@ -130,17 +143,7 @@ var c = document.getElementById('c'),
             xAxes: [{
                 type: 'time',
                 time: {
-                    displayFormats: {
-                        'millisecond': 'MMM DD',
-                        'second': 'MMM DD',
-                        'minute': 'MMM DD',
-                        'hour': 'MMM DD',
-                        'day': 'MMM DD',
-                        'week': 'MMM DD',
-                        'month': 'MMM DD',
-                        'quarter': 'MMM DD',
-                        'year': 'MMM DD'
-                    }
+                    displayFormats: display_formats
                 }
             }],
             yAxes: [{
@@ -156,27 +159,61 @@ var c = document.getElementById('c'),
 window.prices = new Chart(ctx, config_c);
 window.volume = new Chart(dtx, config_d);
 
-document.getElementById('sell_cutoff_0').value = OPTIONS.FIRST_SELL_CUTOFF.gain;
-document.getElementById('sell_cutoff_0_').value = OPTIONS.FIRST_SELL_CUTOFF.sell;
-document.getElementById('sell_cutoff_1').value = OPTIONS.SECOND_SELL_CUTOFF.gain;
-document.getElementById('sell_cutoff_1_').value = OPTIONS.SECOND_SELL_CUTOFF.sell;
-document.getElementById('buy_cutoff').value = OPTIONS.BUY_CUTOFF.drop;
-document.getElementById('buy_cutoff_').value = OPTIONS.BUY_CUTOFF.buy;
+document.title = 'Coinbull: ' + debug.name;
+market_index = debug.market_index;
+
+document.getElementById('vol_spike').value = SETTINGS.VOL_SPIKE;
+document.getElementById('sell_0').value = SETTINGS.FIRST_SELL.gain;
+document.getElementById('sell_0_').value = SETTINGS.FIRST_SELL.sell;
+document.getElementById('sell_1').value = SETTINGS.SECOND_SELL.gain;
+document.getElementById('sell_1_').value = SETTINGS.SECOND_SELL.sell;
+document.getElementById('sell_2').value = SETTINGS.THIRD_SELL;
+document.getElementById('buy_0').value = SETTINGS.FIRST_BUY.drop;
+document.getElementById('buy_0_').value = SETTINGS.FIRST_BUY.buy;
+document.getElementById('buy_1').value = SETTINGS.SECOND_BUY; 
+
+function update_settings_object() {
+    SETTINGS.VOL_SPIKE = Number(document.getElementById('vol_spike').value);
+    SETTINGS.FIRST_SELL.gain = Number(document.getElementById('sell_0').value);
+    SETTINGS.FIRST_SELL.sell = Number(document.getElementById('sell_0_').value);
+    SETTINGS.SECOND_SELL.gain = Number(document.getElementById('sell_1').value);
+    SETTINGS.SECOND_SELL.sell = Number(document.getElementById('sell_1_').value);
+    SETTINGS.THIRD_SELL = Number(document.getElementById('sell_2').value);
+    SETTINGS.FIRST_BUY.drop = Number(document.getElementById('buy_0').value);
+    SETTINGS.FIRST_BUY.buy = Number(document.getElementById('buy_0_').value);
+    SETTINGS.SECOND_BUY = Number(document.getElementById('buy_1').value);
+}
 
 function simulate() {
+    update_settings_object();
+
+    post('/admin/simulate', JSON.stringify(SETTINGS), (res) => {
+        console.log(res);
+    });
+}
+
+function post(endpoint, data, callback) {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', 'http://localhost:4000/admin/simulate', true);
+    xhr.open('POST', 'http://localhost:4000' + endpoint, true);
     xhr.setRequestHeader('Content-Type', 'application/json; charset=UTF-8');
+    xhr.onreadystatechange = () => {
+        if (xhr.readyState == 4 && xhr.status == 200)
+            callback(xhr.responseText);
+    };
+    xhr.send(data);
+}
 
-    OPTIONS.FIRST_SELL_CUTOFF.gain = document.getElementById('sell_cutoff_0').value;
-    OPTIONS.FIRST_SELL_CUTOFF.sell = document.getElementById('sell_cutoff_0_').value;
-    OPTIONS.SECOND_SELL_CUTOFF.gain = document.getElementById('sell_cutoff_1').value;
-    OPTIONS.SECOND_SELL_CUTOFF.sell = document.getElementById('sell_cutoff_1_').value;
-    OPTIONS.BUY_CUTOFF.drop = document.getElementById('buy_cutoff').value;
-    OPTIONS.BUY_CUTOFF.buy = document.getElementById('buy_cutoff_').value;  
+function recalculate() {
+    update_settings_object();
 
-    xhr.send(JSON.stringify(OPTIONS));
-    console.log('sent simulation options');
+    post('/admin/recalc', JSON.stringify({ SETTINGS: SETTINGS, market_index: market_index }), (res) => {
+        config_c.data.datasets[1].data = JSON.parse(res);
+        window.prices.update();
+        document.getElementById('success').style.display = 'block';
+        setTimeout(() => {
+            document.getElementById('success').style.display = 'none';
+        }, 2000);
+    });
 }
 
 </script>
@@ -187,7 +224,7 @@ function simulate() {
         margin: 0;
     }
 
-    #options {
+    .options {
         height: 4%;
         margin: 1em;
         margin-bottom: 0;
@@ -202,6 +239,14 @@ function simulate() {
     #cd {
         width: 100%;
         height: 60%;
+    }
+
+    #success {
+        text-align: center;
+        width: 80%;
+        margin-top: 0.5em;
+        display: none;
+        margin-bottom: 0.5em;
     }
 
     .space {

@@ -15,20 +15,22 @@ let ccxt = require('ccxt'),
   exchanges = [],
   fs = require('fs'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
-  OPTIONS = {
-    VOL_SPIKE_THRESHOLD: 1.37,
-    FIRST_SELL_CUTOFF: {
+  SETTINGS = {
+    VOL_SPIKE: 0.37,
+    FIRST_SELL: {
         gain: 0.1,
         sell: 0.3
     },
-    SECOND_SELL_CUTOFF: {
+    SECOND_SELL: {
         gain: 0.5,
-        sell: 0.6
+        sell: 0.5
     },
-    BUY_CUTOFF: {
+    THIRD_SELL: 0.8,
+    FIRST_BUY: {
         drop: 0.15,
         buy: 0.4 
-    }
+    },
+    SECOND_BUY: 0.6,
   };
 
 const MEAN_AND_VOLUME_PERIOD = 60*60*24*14, //moving averages are over 2 weeks
@@ -57,24 +59,42 @@ app.engine('handlebars', exphbs({
 app.set('view engine', 'handlebars');
 
 app.get('/admin', (req, res) => {
-
     var market_index = req.query.index ? parseInt(req.query.index.split('?')[0]) : 0;
+
+    if (invalid_market_index(market_index))
+        return error('Invalid admin request')
+
     log_('Admin page loaded for market: ' + markets[market_index].name);
 
-    if (market_index == NaN || market_index < 0 || market_index >= markets.length)
-        return error('Invalid debug data request');
-
     get_debug_data(market_index, (data) => {
-        res.render('admin', { debug: JSON.stringify(data), OPTIONS: JSON.stringify(OPTIONS) });
+        res.render('admin', { debug: JSON.stringify(data), SETTINGS: JSON.stringify(SETTINGS) });
+    });
+});
+
+app.post('/admin/recalc', (req, res) => {
+    if (typeof req.body.SETTINGS.VOL_SPIKE != 'number' || req.body.SETTINGS.VOL_SPIKE <= 0 || req.body.SETTINGS.VOL_SPIKE > 1 || invalid_market_index(req.body.market_index))
+        return error('Invalid recalculate request');
+
+    SETTINGS.VOL_SPIKE = req.body.SETTINGS.VOL_SPIKE;
+
+    log_('Admin page recalculated for market: ' + markets[req.body.market_index].name + ' with VOL_SPIKE: ' + SETTINGS.VOL_SPIKE);
+
+    load_historical_markets(() => {
+        get_debug_data(req.body.market_index, (data) => {
+            res.json(data.steady_mean);
+        });
     });
 });
 
 app.post('/admin/simulate', (req, res) => {
     console.log(req.body);
-    
 });
 
 app.listen(4000);
+
+function invalid_market_index(market_index) {
+    return typeof market_index != 'number' || market_index < 0 || market_index >= markets.length;
+}
 
 function startup_bot() {
 
@@ -85,12 +105,12 @@ function startup_bot() {
     }));
 
     new_market('NEO/BTC', EXCHANGES.BITTREX);
-    //new_market('ETH/BTC', EXCHANGES.BITTREX);
-    //new_market('SC/BTC', EXCHANGES.BITTREX);
-    // new_market('GNT/BTC', EXCHANGES.BITTREX);
-    // new_market('STORJ/BTC', EXCHANGES.BITTREX);
-    // new_market('DOPE/BTC', EXCHANGES.BITTREX);
-    // new_market('MCO/BTC', EXCHANGES.BITTREX);
+    new_market('ETH/BTC', EXCHANGES.BITTREX);
+    new_market('SC/BTC', EXCHANGES.BITTREX);
+    new_market('GNT/BTC', EXCHANGES.BITTREX);
+    new_market('STORJ/BTC', EXCHANGES.BITTREX);
+    new_market('DOPE/BTC', EXCHANGES.BITTREX);
+    new_market('MCO/BTC', EXCHANGES.BITTREX);
 
     load_historical_markets(() => {
         heart = heartbeats.createHeart(POLL_INTERVAL * 1000);
@@ -143,17 +163,12 @@ function load_historical_markets(callback) {
                 if (err) throw err;
                 var data = JSON.parse(body);
 
-                if (!data.success || !data.result[0]) error('Could not load historical data for ' + markets[i].name);
+                if (!data.success || !data.result[0]) return error('Could not load historical data for ' + markets[i].name);
 
                 var collection = db.collection(markets[i].name);
                 collection.remove({}, {});
 
                 collection.ensureIndex({time: 1}, {expireAfterSeconds: MEAN_AND_VOLUME_PERIOD});
-
-                const tick_seconds = 60*5,
-                  ticks_per_period = MEAN_AND_VOLUME_PERIOD / tick_seconds,
-                  db_entries_per_period = MEAN_AND_VOLUME_PERIOD / POLL_INTERVAL,
-                  db_entries_per_tick = ~~(db_entries_per_period / ticks_per_period);
 
                 //used to calculate 24 hr volume moving average
                 var last_24_hrs = [],  //the volume ticks over the last 24 hours (stores values of moving average)
@@ -193,7 +208,7 @@ function load_historical_markets(callback) {
                         res.vol_unit = vol_sum_24_hr; //base volume is volume in btc, this is moving average over 24 hrs
                         res.vol_avg = vol_sum_2_weeks / vol_count;
                         res.steady_mean = mean_sum / mean_count;
-                        res.is_steady = res.vol_unit <= OPTIONS.VOL_SPIKE_THRESHOLD * res.vol_avg;
+                        res.is_steady = res.vol_unit <= (1 + SETTINGS.VOL_SPIKE) * res.vol_avg;
                         res.time = time;
                         res.h = true; //historical data, so poll interval is tick_interval, not INTERVAL
     
@@ -262,7 +277,8 @@ function get_debug_data(market_index, callback) {
         vol_avgs_over_period: [],
         price: [],
         steady_mean: [],
-        name: markets[market_index].name
+        name: markets[market_index].name,
+        market_index: market_index
     };  
 
     db.collection(markets[market_index].name).find({}).sort({ time: 1 }).toArray((err, arr) => {
