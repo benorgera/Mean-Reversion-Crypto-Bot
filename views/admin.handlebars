@@ -15,7 +15,16 @@
         <label for="vol_spike">Vol Spike:</label>
         <input type="number" min="0" max="1" step="any" class="form-control" id="vol_spike" required>
       </div>
+      <div class="form-group">
+        <label for="mean_days">Mean Days:</label>
+        <input type="number" min="1" max="14" step="any" class="form-control" id="mean_days" required>
+      </div>
+      <div class="form-group">
+        <label for="vol_days">Vol Days:</label>
+        <input type="number" min="1" max="14" step="any" class="form-control" id="vol_days" required>
+      </div>
       <button class="btn btn-primary space">Recalc</button>
+    </form>
     <form action="javascript:void(0);" class="form-inline options" onsubmit="return simulate()">
       <div class="form-group">
         <label class="space" for="buy_0">Buy 1:</label>
@@ -162,7 +171,7 @@ window.volume = new Chart(dtx, config_d);
 document.title = 'Coinbull: ' + debug.name;
 market_index = debug.market_index;
 
-document.getElementById('vol_spike').value = SETTINGS.VOL_SPIKE;
+document.getElementById('vol_spike').value = SETTINGS.VOLUME_SPIKE;
 document.getElementById('sell_0').value = SETTINGS.FIRST_SELL.gain;
 document.getElementById('sell_0_').value = SETTINGS.FIRST_SELL.sell;
 document.getElementById('sell_1').value = SETTINGS.SECOND_SELL.gain;
@@ -171,9 +180,13 @@ document.getElementById('sell_2').value = SETTINGS.THIRD_SELL;
 document.getElementById('buy_0').value = SETTINGS.FIRST_BUY.drop;
 document.getElementById('buy_0_').value = SETTINGS.FIRST_BUY.buy;
 document.getElementById('buy_1').value = SETTINGS.SECOND_BUY; 
+document.getElementById('mean_days').value = SETTINGS.MEAN_PERIOD / (60*60*24); 
+document.getElementById('vol_days').value = SETTINGS.VOLUME_PERIOD / (60*60*24); 
 
 function update_settings_object() {
-    SETTINGS.VOL_SPIKE = Number(document.getElementById('vol_spike').value);
+    SETTINGS.MEAN_PERIOD = Number(document.getElementById('mean_days').value) * 60*60*24;
+    SETTINGS.VOLUME_PERIOD = Number(document.getElementById('vol_days').value) * 60*60*24;
+    SETTINGS.VOLUME_SPIKE = Number(document.getElementById('vol_spike').value);
     SETTINGS.FIRST_SELL.gain = Number(document.getElementById('sell_0').value);
     SETTINGS.FIRST_SELL.sell = Number(document.getElementById('sell_0_').value);
     SETTINGS.SECOND_SELL.gain = Number(document.getElementById('sell_1').value);
@@ -205,6 +218,8 @@ function post(endpoint, data, callback) {
 
 function recalculate() {
     update_settings_object();
+
+    console.log(SETTINGS);
 
     post('/admin/recalc', JSON.stringify({ SETTINGS: SETTINGS, market_index: market_index }), (res) => {
         config_c.data.datasets[1].data = JSON.parse(res);

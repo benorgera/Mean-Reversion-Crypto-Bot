@@ -16,7 +16,9 @@ let ccxt = require('ccxt'),
   fs = require('fs'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
   SETTINGS = {
-    VOL_SPIKE: 0.37,
+    MEAN_PERIOD: 60*60*24*3,
+    VOLUME_PERIOD: 60*60*24*7,
+    VOLUME_SPIKE: 0.37,
     FIRST_SELL: {
         gain: 0.1,
         sell: 0.3
@@ -33,7 +35,7 @@ let ccxt = require('ccxt'),
     SECOND_BUY: 0.6,
   };
 
-const MEAN_AND_VOLUME_PERIOD = 60*60*24*14, //moving averages are over 2 weeks
+const SIMULATON_PERIOD = 60*60*24*14,
   VOLUME_UNIT_INTERVAL = 60*60*24, //volume is stored over one day
   POLL_INTERVAL = 2,  //update once every 2 seconds
   EXCHANGES = {
@@ -72,12 +74,17 @@ app.get('/admin', (req, res) => {
 });
 
 app.post('/admin/recalc', (req, res) => {
-    if (typeof req.body.SETTINGS.VOL_SPIKE != 'number' || req.body.SETTINGS.VOL_SPIKE <= 0 || req.body.SETTINGS.VOL_SPIKE > 1 || invalid_market_index(req.body.market_index))
+    console.log(req.body.SETTINGS);
+    if (typeof req.body.SETTINGS.VOLUME_SPIKE != 'number' || req.body.SETTINGS.VOLUME_SPIKE <= 0 || req.body.SETTINGS.VOLUME_SPIKE > 1 || invalid_market_index(req.body.market_index)
+      || typeof req.body.SETTINGS.MEAN_PERIOD != 'number' || req.body.SETTINGS.MEAN_PERIOD <= VOLUME_UNIT_INTERVAL || req.body.SETTINGS.MEAN_PERIOD > SIMULATON_PERIOD
+      || typeof req.body.SETTINGS.VOLUME_PERIOD != 'number' || req.body.SETTINGS.VOLUME_PERIOD <= VOLUME_UNIT_INTERVAL || req.body.SETTINGS.VOLUME_PERIOD > SIMULATON_PERIOD)
         return error('Invalid recalculate request');
 
-    SETTINGS.VOL_SPIKE = req.body.SETTINGS.VOL_SPIKE;
+    SETTINGS.VOLUME_SPIKE = req.body.SETTINGS.VOLUME_SPIKE;
+    SETTINGS.VOLUME_PERIOD = req.body.SETTINGS.VOLUME_PERIOD;
+    SETTINGS.MEAN_PERIOD = req.body.SETTINGS.MEAN_PERIOD;
 
-    log_('Admin page recalculated for market: ' + markets[req.body.market_index].name + ' with VOL_SPIKE: ' + SETTINGS.VOL_SPIKE);
+    log_('Admin page recalculated with VOLUME_SPIKE: ' + SETTINGS.VOLUME_SPIKE + ', VOLUME_PERIOD: ' + SETTINGS.VOLUME_PERIOD + ', MEAN_PERIOD: ' + SETTINGS.MEAN_PERIOD);
 
     load_historical_markets(() => {
         get_debug_data(req.body.market_index, (data) => {
@@ -168,72 +175,52 @@ function load_historical_markets(callback) {
                 var collection = db.collection(markets[i].name);
                 collection.remove({}, {});
 
-                collection.ensureIndex({time: 1}, {expireAfterSeconds: MEAN_AND_VOLUME_PERIOD});
+                collection.ensureIndex({time: 1}, {expireAfterSeconds: SIMULATON_PERIOD});
 
-                //used to calculate 24 hr volume moving average
-                var last_24_hrs = [],  //the volume ticks over the last 24 hours (stores values of moving average)
-                  vol_sum_24_hr = 0; //the sum of volumes over tick_interval for last 24 hours
+                var vol_ticks = new Moving_Average(VOLUME_UNIT_INTERVAL),
+                  vols = new Moving_Average(SETTINGS.VOLUME_PERIOD),
+                  means = new Moving_Average(SETTINGS.MEAN_PERIOD, 60*5);
 
-                //used to calculate 2 week 24 hr volume average
-                var vol_sum_2_weeks = 0,
-                  vol_count = 0;
+                data.result.forEach((item, ind) => {
 
-                //used to calculate 2 week mean price on steady data (low volume data)
-                var mean_sum = 0,
-                  mean_count = 0;
-
-                for (var j = 0; j < data.result.length; j++) {
                     var res = {},
-                      time = new Date(data.result[j].T);
+                      time = new Date(item.T),
+                      time_s = time.getTime(),
+                      age_s = (Date.now() - time.getTime()) / 1000; 
 
-                    if ((Date.now() - time.getTime()) / 1000 < MEAN_AND_VOLUME_PERIOD) {
+                    if (age_s < SIMULATON_PERIOD) {
 
-                        //removing old values from moving average array
-                        for (var k = 0; k < last_24_hrs.length; k++)
-                            if ((time.getTime() - last_24_hrs[k].time.getTime()) / 1000 > VOLUME_UNIT_INTERVAL) {
-                                vol_sum_24_hr -= last_24_hrs[k].vol;
-                                last_24_hrs.splice(k, 1);
-                            } else {
-                                break;
-                            }
+                        vol_ticks.add(time_s, item.BV);
 
-                        vol_sum_24_hr += data.result[j].BV;
-                        last_24_hrs.push({
-                            time: time,
-                            vol: data.result[j].BV
-                        });
-
-                        res.price = data.result[j].C; //close price is price
-                        res.raw_vol = data.result[j].BV;  //volume over past tick_interval
-                        res.vol_unit = vol_sum_24_hr; //base volume is volume in btc, this is moving average over 24 hrs
-                        res.vol_avg = vol_sum_2_weeks / vol_count;
-                        res.steady_mean = mean_sum / mean_count;
-                        res.is_steady = res.vol_unit <= (1 + SETTINGS.VOL_SPIKE) * res.vol_avg;
+                        res.price = item.C; //close price is price
+                        res.raw_vol = item.BV;  //volume over past tick_interval
+                        res.vol_unit = vol_ticks.get(); //base volume is volume in btc, this is moving average over 24 hrs
+                        res.vol_avg = vols.get();
+                        res.steady_mean = means.get();
+                        res.is_steady = res.vol_unit <= (1 + SETTINGS.VOLUME_SPIKE) * res.vol_avg;
                         res.time = time;
                         res.h = true; //historical data, so poll interval is tick_interval, not INTERVAL
     
                         collection.insert(res);
-    
-                        //current stock's volume is not counted towards the average its compared to
-                        vol_sum_2_weeks += res.vol_unit;
-                        vol_count++;
-    
-                        //only count steady stocks towards mean
-                        if (res.is_steady) {
-                            mean_sum += res.price;
-                            mean_count++;
+
+                        vols.add(time_s, res.vol_unit);
+                        if (res.is_steady) //only count steady stocks towards mean
+                            means.add(time_s, res.price);
+
+                    } else {
+
+                        if (age_s < SIMULATON_PERIOD + SETTINGS.MEAN_PERIOD)
+                            means.add(time_s, item.C);
+
+                        if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD) {
+                            vol_ticks.add(time_s, item.BV);
+                            vols.add(time_s, vol_ticks.get());
+                        } else if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD + VOLUME_UNIT_INTERVAL) {
+                            vol_ticks.add(time_s, item.BV);
                         }
-
-                    } else if ((Date.now() - time.getTime()) / 1000 < MEAN_AND_VOLUME_PERIOD + VOLUME_UNIT_INTERVAL) {
-                        
-                        vol_sum_24_hr += data.result[j].BV;
-                        last_24_hrs.push({
-                            time: time,
-                            vol: data.result[j].BV
-                        });
-
                     }
-                }
+                });
+
                 log_('Loaded market history: ' + markets[i].name);
                 num_loaded++;
 
@@ -318,4 +305,35 @@ function log_(msg) {
 function error(msg) {
     console.error(msg.message ? msg.message : msg);
     log.error(msg.message ? msg.message : msg);
+}
+
+function Moving_Average(interval, ticks) {
+    this.sum = 0;
+    this.data = [];
+    this.interval = interval;
+    this.desired_len = ticks ? interval / ticks : 0;
+}
+
+Moving_Average.prototype.add = function(time, vol) {
+    this.sum += vol;
+    this.data.push({
+        time: time,
+        vol: vol
+    });
+}
+
+Moving_Average.prototype.get = function() {
+    if (this.data.length == 0) return;
+
+    var since = this.data[this.data.length - 1].time;
+
+    for (var k = 0; k < this.data.length - 1; k++)
+        if (this.desired_len ? this.data.length > this.desired_len : true && (since - this.data[k].time) / 1000 > this.interval) {
+            this.sum -= this.data[k].vol;
+            this.data.splice(k, 1);
+        } else {
+            break; //assumes everything pushed in order
+        }
+
+    return this.sum / this.data.length;
 }
