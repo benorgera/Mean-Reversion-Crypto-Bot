@@ -74,7 +74,6 @@ app.get('/admin', (req, res) => {
 });
 
 app.post('/admin/recalc', (req, res) => {
-    console.log(req.body.SETTINGS);
     if (typeof req.body.SETTINGS.VOLUME_SPIKE != 'number' || req.body.SETTINGS.VOLUME_SPIKE <= 0 || req.body.SETTINGS.VOLUME_SPIKE > 1 || invalid_market_index(req.body.market_index)
       || typeof req.body.SETTINGS.MEAN_PERIOD != 'number' || req.body.SETTINGS.MEAN_PERIOD <= VOLUME_UNIT_INTERVAL || req.body.SETTINGS.MEAN_PERIOD > SIMULATON_PERIOD
       || typeof req.body.SETTINGS.VOLUME_PERIOD != 'number' || req.body.SETTINGS.VOLUME_PERIOD <= VOLUME_UNIT_INTERVAL || req.body.SETTINGS.VOLUME_PERIOD > SIMULATON_PERIOD)
@@ -86,9 +85,10 @@ app.post('/admin/recalc', (req, res) => {
 
     log_('Admin page recalculated with VOLUME_SPIKE: ' + SETTINGS.VOLUME_SPIKE + ', VOLUME_PERIOD: ' + SETTINGS.VOLUME_PERIOD + ', MEAN_PERIOD: ' + SETTINGS.MEAN_PERIOD);
 
-    load_historical_markets(() => {
+    load_market(req.body.market_index, () => {
         get_debug_data(req.body.market_index, (data) => {
             res.json(data.steady_mean);
+            load_historical_markets(() => {}, req.body.market_index);
         });
     });
 });
@@ -120,6 +120,7 @@ function startup_bot() {
     new_market('MCO/BTC', EXCHANGES.BITTREX);
 
     load_historical_markets(() => {
+        log_('Starting Bot');
         heart = heartbeats.createHeart(POLL_INTERVAL * 1000);
         //heart.createEvent(1, heartbeat);
     });
@@ -160,73 +161,77 @@ function get_stats(collection, exchange, callback) {
     }
 }
 
-function load_historical_markets(callback) {
-    var num_loaded = 0;
+function load_market(i, callback) {
+    request('https://bittrex.com/Api/v2.0/pub/market/GetTicks?marketName='
+    + markets[i].name.split('/')[1] + '-' + markets[i].name.split('/')[0] + '&tickInterval=fiveMin', (err, res, body) => {
+        if (err) throw err;
+        var data = JSON.parse(body);
 
-    markets.forEach((item, i) => {
+        if (!data.success || !data.result[0]) return error('Could not load historical data for ' + markets[i].name);
 
-        request('https://bittrex.com/Api/v2.0/pub/market/GetTicks?marketName='
-            + markets[i].name.split('/')[1] + '-' + markets[i].name.split('/')[0] + '&tickInterval=fiveMin', (err, res, body) => {
-                if (err) throw err;
-                var data = JSON.parse(body);
+        var collection = db.collection(markets[i].name);
+        collection.remove({}, {});
 
-                if (!data.success || !data.result[0]) return error('Could not load historical data for ' + markets[i].name);
+        collection.ensureIndex({time: 1}, {expireAfterSeconds: SIMULATON_PERIOD});
 
-                var collection = db.collection(markets[i].name);
-                collection.remove({}, {});
+        var vol_ticks = new Moving_Average(VOLUME_UNIT_INTERVAL),
+          vols = new Moving_Average(SETTINGS.VOLUME_PERIOD),
+          means = new Moving_Average(SETTINGS.MEAN_PERIOD, 60*5);
 
-                collection.ensureIndex({time: 1}, {expireAfterSeconds: SIMULATON_PERIOD});
+        data.result.forEach((item, ind) => {
 
-                var vol_ticks = new Moving_Average(VOLUME_UNIT_INTERVAL),
-                  vols = new Moving_Average(SETTINGS.VOLUME_PERIOD),
-                  means = new Moving_Average(SETTINGS.MEAN_PERIOD, 60*5);
+            var res = {},
+              time = new Date(item.T),
+              time_s = time.getTime(),
+              age_s = (Date.now() - time.getTime()) / 1000; 
 
-                data.result.forEach((item, ind) => {
+            if (age_s < SIMULATON_PERIOD) {
 
-                    var res = {},
-                      time = new Date(item.T),
-                      time_s = time.getTime(),
-                      age_s = (Date.now() - time.getTime()) / 1000; 
+                vol_ticks.add(time_s, item.BV);
 
-                    if (age_s < SIMULATON_PERIOD) {
+                res.price = item.C; //close price is price
+                res.raw_vol = item.BV;  //volume over past tick_interval
+                res.vol_unit = vol_ticks.get(); //base volume is volume in btc, this is moving average over 24 hrs
+                res.vol_avg = vols.get();
+                res.steady_mean = means.get();
+                res.is_steady = res.vol_unit <= (1 + SETTINGS.VOLUME_SPIKE) * res.vol_avg;
+                res.time = time;
+                res.h = true; //historical data, so poll interval is tick_interval, not INTERVAL
 
-                        vol_ticks.add(time_s, item.BV);
+                collection.insert(res);
 
-                        res.price = item.C; //close price is price
-                        res.raw_vol = item.BV;  //volume over past tick_interval
-                        res.vol_unit = vol_ticks.get(); //base volume is volume in btc, this is moving average over 24 hrs
-                        res.vol_avg = vols.get();
-                        res.steady_mean = means.get();
-                        res.is_steady = res.vol_unit <= (1 + SETTINGS.VOLUME_SPIKE) * res.vol_avg;
-                        res.time = time;
-                        res.h = true; //historical data, so poll interval is tick_interval, not INTERVAL
-    
-                        collection.insert(res);
+                vols.add(time_s, res.vol_unit);
+                if (res.is_steady) //only count steady stocks towards mean
+                    means.add(time_s, res.price);
 
-                        vols.add(time_s, res.vol_unit);
-                        if (res.is_steady) //only count steady stocks towards mean
-                            means.add(time_s, res.price);
+            } else {
 
-                    } else {
+                if (age_s < SIMULATON_PERIOD + SETTINGS.MEAN_PERIOD)
+                    means.add(time_s, item.C);
 
-                        if (age_s < SIMULATON_PERIOD + SETTINGS.MEAN_PERIOD)
-                            means.add(time_s, item.C);
-
-                        if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD) {
-                            vol_ticks.add(time_s, item.BV);
-                            vols.add(time_s, vol_ticks.get());
-                        } else if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD + VOLUME_UNIT_INTERVAL) {
-                            vol_ticks.add(time_s, item.BV);
-                        }
-                    }
-                });
-
-                log_('Loaded market history: ' + markets[i].name);
-                num_loaded++;
-
-                if (num_loaded == markets.length) callback();
+                if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD) {
+                    vol_ticks.add(time_s, item.BV);
+                    vols.add(time_s, vol_ticks.get());
+                } else if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD + VOLUME_UNIT_INTERVAL) {
+                    vol_ticks.add(time_s, item.BV);
+                }
+            }
         });
+
+        log_('Loaded market: ' + markets[i].name);
+
+        callback();
     });
+}
+
+function load_historical_markets(callback, except) {
+    var num_loaded = Number(typeof except == 'number' ? 1 : 0);
+
+    for (var i = 0; i < markets.length; i++)
+        if (i !== except) load_market(i, function() {
+            num_loaded++;
+            if (num_loaded == markets.length) this();
+        }.bind(callback));
 }
 
 function add_debug_point(data, db_entry) {
@@ -269,7 +274,6 @@ function get_debug_data(market_index, callback) {
     };  
 
     db.collection(markets[market_index].name).find({}).sort({ time: 1 }).toArray((err, arr) => {
-
         if (err) return error(err);
 
         arr.forEach((entry) => {
@@ -306,6 +310,10 @@ function error(msg) {
     console.error(msg.message ? msg.message : msg);
     log.error(msg.message ? msg.message : msg);
 }
+
+
+
+
 
 function Moving_Average(interval, ticks) {
     this.sum = 0;
