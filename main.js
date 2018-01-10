@@ -228,10 +228,11 @@ function load_historical_markets(callback, except) {
     var num_loaded = Number(typeof except == 'number' ? 1 : 0);
 
     for (var i = 0; i < markets.length; i++)
-        if (i !== except) load_market(i, function() {
-            num_loaded++;
-            if (num_loaded == markets.length) this();
-        }.bind(callback));
+        if (i !== except)
+            load_market(i, function() {
+                num_loaded++;
+                if (num_loaded == markets.length) this();
+            }.bind(callback));
 }
 
 function add_debug_point(data, db_entry) {
@@ -323,6 +324,8 @@ function Moving_Average(interval, ticks) {
 }
 
 Moving_Average.prototype.add = function(time, vol) {
+    if (Number.MAX_SAFE_INTEGER - vol < this.sum) error('Integer overflow error');
+
     this.sum += vol;
     this.data.push({
         time: time,
