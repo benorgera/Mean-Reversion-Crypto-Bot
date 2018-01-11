@@ -16,9 +16,10 @@ let ccxt = require('ccxt'),
   fs = require('fs'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
   SETTINGS = {
-    MEAN_PERIOD: 60*60*24*3,
-    VOLUME_PERIOD: 60*60*24*7,
-    VOLUME_SPIKE: 0.37,
+    MEAN_PERIOD: 60*60*24*4,
+    VOLUME_PERIOD: 60*60*24*6,
+    VOLUME_HIGH: 0.37,
+    VOLUME_LOW: 0.06,
     FIRST_SELL: {
         gain: 0.1,
         sell: 0.3
@@ -41,7 +42,8 @@ const SIMULATON_PERIOD = 60*60*24*14,
   EXCHANGES = {
     BITTREX: 0
   },
-  EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ]; //when data is polled, this is the volume unit returned
+  EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ], //when data is polled, this is the volume unit returned
+  EXCHANGES_FEES = [ 0.0025 ];
 
 mongo_client.connect(url, (err, data) => {
     if (err) error(err);
@@ -74,16 +76,16 @@ app.get('/admin', (req, res) => {
 });
 
 app.post('/admin/recalc', (req, res) => {
-    if (typeof req.body.SETTINGS.VOLUME_SPIKE != 'number' || req.body.SETTINGS.VOLUME_SPIKE <= 0 || req.body.SETTINGS.VOLUME_SPIKE > 1 || invalid_market_index(req.body.market_index)
+    if (typeof req.body.SETTINGS.VOLUME_HIGH != 'number' || req.body.SETTINGS.VOLUME_HIGH <= 0 || req.body.SETTINGS.VOLUME_HIGH > 1 || invalid_market_index(req.body.market_index)
       || typeof req.body.SETTINGS.MEAN_PERIOD != 'number' || req.body.SETTINGS.MEAN_PERIOD <= VOLUME_UNIT_INTERVAL || req.body.SETTINGS.MEAN_PERIOD > SIMULATON_PERIOD
       || typeof req.body.SETTINGS.VOLUME_PERIOD != 'number' || req.body.SETTINGS.VOLUME_PERIOD <= VOLUME_UNIT_INTERVAL || req.body.SETTINGS.VOLUME_PERIOD > SIMULATON_PERIOD)
         return error('Invalid recalculate request');
 
-    SETTINGS.VOLUME_SPIKE = req.body.SETTINGS.VOLUME_SPIKE;
+    SETTINGS.VOLUME_HIGH = req.body.SETTINGS.VOLUME_HIGH;
     SETTINGS.VOLUME_PERIOD = req.body.SETTINGS.VOLUME_PERIOD;
     SETTINGS.MEAN_PERIOD = req.body.SETTINGS.MEAN_PERIOD;
 
-    log_('Admin page recalculated with VOLUME_SPIKE: ' + SETTINGS.VOLUME_SPIKE + ', VOLUME_PERIOD: ' + SETTINGS.VOLUME_PERIOD + ', MEAN_PERIOD: ' + SETTINGS.MEAN_PERIOD);
+    log_('Admin page recalculated with VOLUME_HIGH: ' + SETTINGS.VOLUME_HIGH + ', VOLUME_PERIOD: ' + SETTINGS.VOLUME_PERIOD + ', MEAN_PERIOD: ' + SETTINGS.MEAN_PERIOD);
 
     load_market(req.body.market_index, () => {
         get_debug_data(req.body.market_index, (data) => {
@@ -94,8 +96,14 @@ app.post('/admin/recalc', (req, res) => {
 });
 
 app.post('/admin/simulate', (req, res) => {
-    console.log(req.body);
+    if (typeof req.body.SETTINGS.VOLUME_HIGH != 'number' || req.body.SETTINGS.VOLUME_HIGH <= 0 || req.body.SETTINGS.VOLUME_HIGH > 1 || invalid_market_index(req.body.market_index))
+        ;
 });
+
+function check_trade(stock_profile, desired_base) {
+    var percent_change = stock_profile.price / stock_profile.mean - 1,
+      low_volume = stock_profile.vol / stock_profile.vol_avg - 1 < SETTINGS.VOL_LOW;
+}
 
 app.listen(4000);
 
@@ -122,7 +130,7 @@ function startup_bot() {
     load_historical_markets(() => {
         log_('Starting Bot');
         heart = heartbeats.createHeart(POLL_INTERVAL * 1000);
-        //heart.createEvent(1, heartbeat);
+        heart.createEvent(1, heartbeat);
     });
 }
 
@@ -162,8 +170,10 @@ function get_stats(collection, exchange, callback) {
 }
 
 function load_market(i, callback) {
+    const tick_interval = 'fiveMin';
+
     request('https://bittrex.com/Api/v2.0/pub/market/GetTicks?marketName='
-    + markets[i].name.split('/')[1] + '-' + markets[i].name.split('/')[0] + '&tickInterval=fiveMin', (err, res, body) => {
+    + markets[i].name.split('/')[1] + '-' + markets[i].name.split('/')[0] + '&tickInterval=' + tick_interval, (err, res, body) => {
         if (err) throw err;
         var data = JSON.parse(body);
 
@@ -174,9 +184,9 @@ function load_market(i, callback) {
 
         collection.ensureIndex({time: 1}, {expireAfterSeconds: SIMULATON_PERIOD});
 
-        var vol_ticks = new Moving_Average(VOLUME_UNIT_INTERVAL),
-          vols = new Moving_Average(SETTINGS.VOLUME_PERIOD),
-          means = new Moving_Average(SETTINGS.MEAN_PERIOD, 60*5);
+        var vol_ticks = new Moving_Average(VOLUME_UNIT_INTERVAL, true),
+          vols = new Moving_Average(SETTINGS.VOLUME_PERIOD, false),
+          means = new Moving_Average(SETTINGS.MEAN_PERIOD, false, 24 * (tick_interval == 'thirtyMin' ? 2 : 12));
 
         data.result.forEach((item, ind) => {
 
@@ -194,7 +204,7 @@ function load_market(i, callback) {
                 res.vol_unit = vol_ticks.get(); //base volume is volume in btc, this is moving average over 24 hrs
                 res.vol_avg = vols.get();
                 res.steady_mean = means.get();
-                res.is_steady = res.vol_unit <= (1 + SETTINGS.VOLUME_SPIKE) * res.vol_avg;
+                res.is_steady = res.vol_unit <= (1 + SETTINGS.VOLUME_HIGH) * res.vol_avg;
                 res.time = time;
                 res.h = true; //historical data, so poll interval is tick_interval, not INTERVAL
 
@@ -212,13 +222,13 @@ function load_market(i, callback) {
                 if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD) {
                     vol_ticks.add(time_s, item.BV);
                     vols.add(time_s, vol_ticks.get());
-                } else if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD + VOLUME_UNIT_INTERVAL) {
+                } else if (age_s < SIMULATON_PERIOD + SETTINGS.VOLUME_PERIOD + VOLUME_UNIT_INTERVAL)
                     vol_ticks.add(time_s, item.BV);
-                }
             }
         });
+        vol_ticks.get();
 
-        log_('Loaded market: ' + markets[i].name);
+        log_(vol_ticks.data.length + ' Loaded market: ' + markets[i].name);
 
         callback();
     });
@@ -315,12 +325,13 @@ function error(msg) {
 
 
 
-
-function Moving_Average(interval, ticks) {
+//pass in number of expected ticks per interval to ensure data stays at desired_len long
+function Moving_Average(interval, is_sum, ticks) {
     this.sum = 0;
+    this.is_sum = is_sum;
     this.data = [];
     this.interval = interval;
-    this.desired_len = ticks ? interval / ticks : 0;
+    this.desired_len = ticks;
 }
 
 Moving_Average.prototype.add = function(time, vol) {
@@ -338,13 +349,13 @@ Moving_Average.prototype.get = function() {
 
     var since = this.data[this.data.length - 1].time;
 
-    for (var k = 0; k < this.data.length - 1; k++)
-        if (this.desired_len ? this.data.length > this.desired_len : true && (since - this.data[k].time) / 1000 > this.interval) {
+    for (var k = 0; k < this.data.length; k++)
+        if ((!this.desired_len || this.data.length > this.desired_len) && (since - this.data[k].time) / 1000 >= this.interval) {
             this.sum -= this.data[k].vol;
             this.data.splice(k, 1);
         } else {
-            break; //assumes everything pushed in order
+            break; //assumes everything pushed chronologically
         }
 
-    return this.sum / this.data.length;
+    return this.is_sum ? this.sum : this.sum / this.data.length;
 }

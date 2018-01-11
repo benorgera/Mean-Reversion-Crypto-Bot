@@ -12,8 +12,8 @@
     </div>
     <form action="javascript:void(0);" class="form-inline options no-top" onsubmit="return recalculate()">
       <div class="form-group">
-        <label for="vol_spike">Vol Spike:</label>
-        <input type="number" min="0" max="1" step="any" class="form-control input-sm" id="vol_spike" required>
+        <label for="vol_high">Vol High:</label>
+        <input type="number" min="0" max="1" step="any" class="form-control input-sm" id="vol_high" required>
       </div>
       <div class="form-group">
         <label for="mean_days" class="space">Mean Days:</label>
@@ -58,16 +58,20 @@ var c = document.getElementById('c'),
   SETTINGS = JSON.parse('{{{ SETTINGS }}}'),
   debug = JSON.parse('{{{ debug }}}'),
   market_index,
-  display_formats = {
+  time = {
+    unit: 'day',
+    unitStepSize: 1,
+    display_formats: {
       millisecond: 'MMM DD',
       second: 'MMM DD',
       minute: 'MMM DD',
-      hour: 'MMM DD',
-      day: 'MMM DD',
+      hour: 'HH MMM DD',
+      day: 'HH MMM DD',
       week: 'MMM DD',
       month: 'MMM DD',
       quarter: 'MMM DD',
       year: 'MMM DD'
+    }
   },
   config_d = {
       type: 'line',
@@ -104,9 +108,7 @@ var c = document.getElementById('c'),
           scales: {
               xAxes: [{
                   type: 'time',
-                  time: {
-                      displayFormats: display_formats
-                  }
+                  time: time
               }],
               yAxes: [{
                   id: 'tick_vol',
@@ -151,9 +153,7 @@ var c = document.getElementById('c'),
         scales: {
             xAxes: [{
                 type: 'time',
-                time: {
-                    displayFormats: display_formats
-                }
+                time: time
             }],
             yAxes: [{
                 scaleLabel: {
@@ -171,7 +171,7 @@ window.volume = new Chart(dtx, config_d);
 document.title = 'Coinbull: ' + debug.name;
 market_index = debug.market_index;
 
-document.getElementById('vol_spike').value = SETTINGS.VOLUME_SPIKE;
+document.getElementById('vol_high').value = SETTINGS.VOLUME_HIGH;
 document.getElementById('sell_0').value = SETTINGS.FIRST_SELL.gain;
 document.getElementById('sell_0_').value = SETTINGS.FIRST_SELL.sell;
 document.getElementById('sell_1').value = SETTINGS.SECOND_SELL.gain;
@@ -186,7 +186,7 @@ document.getElementById('vol_days').value = SETTINGS.VOLUME_PERIOD / (60*60*24);
 function update_settings_object() {
     SETTINGS.MEAN_PERIOD = Number(document.getElementById('mean_days').value) * 60*60*24;
     SETTINGS.VOLUME_PERIOD = Number(document.getElementById('vol_days').value) * 60*60*24;
-    SETTINGS.VOLUME_SPIKE = Number(document.getElementById('vol_spike').value);
+    SETTINGS.VOLUME_HIGH = Number(document.getElementById('vol_high').value);
     SETTINGS.FIRST_SELL.gain = Number(document.getElementById('sell_0').value);
     SETTINGS.FIRST_SELL.sell = Number(document.getElementById('sell_0_').value);
     SETTINGS.SECOND_SELL.gain = Number(document.getElementById('sell_1').value);
