@@ -16,10 +16,11 @@ let ccxt = require('ccxt'),
   fs = require('fs'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
   SETTINGS = {
-    MEAN_PERIOD: 60*60*24*4,
-    VOLUME_PERIOD: 60*60*24*6,
+    MEAN_PERIOD: 60*60*24*5,
+    VOLUME_PERIOD: 60*60*24*7,
     VOLUME_HIGH: 0.37,
-    VOLUME_LOW: 0.06,
+   // VOLUME_LOW: 0.06, if vol is within or below this percentage (+ or -), and price is low, buy (for now this is 0%)
+    REV_TOL: 0.05, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
     FIRST_SELL: {
         gain: 0.1,
         sell: 0.3
@@ -28,12 +29,18 @@ let ccxt = require('ccxt'),
         gain: 0.5,
         sell: 0.5
     },
-    THIRD_SELL: 0.8,
+    THIRD_SELL: {
+        gain: 0.8,
+        sell: 0.8  //sell at peak above gain
+    },
     FIRST_BUY: {
         drop: 0.15,
         buy: 0.4 
     },
-    SECOND_BUY: 0.6,
+    SECOND_BUY: {
+        drop: 0.25,
+        buy: 0.6  //buy at peak below gain
+    }
   };
 
 const SIMULATON_PERIOD = 60*60*24*14,
@@ -42,6 +49,7 @@ const SIMULATON_PERIOD = 60*60*24*14,
   EXCHANGES = {
     BITTREX: 0
   },
+  FAST = true,  //30 min tick interval is fastest
   EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ], //when data is polled, this is the volume unit returned
   EXCHANGES_FEES = [ 0.0025 ];
 
@@ -96,16 +104,156 @@ app.post('/admin/recalc', (req, res) => {
 });
 
 app.post('/admin/simulate', (req, res) => {
-    if (typeof req.body.SETTINGS.VOLUME_HIGH != 'number' || req.body.SETTINGS.VOLUME_HIGH <= 0 || req.body.SETTINGS.VOLUME_HIGH > 1 || invalid_market_index(req.body.market_index))
-        ;
+    if (typeof req.body.SETTINGS.REV_TOL != 'number' || req.body.SETTINGS.REV_TOL <= 0 || req.body.SETTINGS.REV_TOL > 1 || invalid_market_index(req.body.market_index)
+      || typeof req.body.SETTINGS.FIRST_SELL.gain != 'number' || req.body.SETTINGS.FIRST_SELL.gain <= 0 || req.body.SETTINGS.FIRST_SELL.gain > 1
+      || typeof req.body.SETTINGS.FIRST_SELL.sell != 'number' || req.body.SETTINGS.FIRST_SELL.sell <= 0 || req.body.SETTINGS.FIRST_SELL.sell > 1
+      || typeof req.body.SETTINGS.SECOND_SELL.gain != 'number' || req.body.SETTINGS.SECOND_SELL.gain <= 0 || req.body.SETTINGS.SECOND_SELL.gain > 1
+      || typeof req.body.SETTINGS.SECOND_SELL.sell != 'number' || req.body.SETTINGS.SECOND_SELL.sell <= 0 || req.body.SETTINGS.SECOND_SELL.sell > 1
+      || typeof req.body.SETTINGS.THIRD_SELL.gain != 'number' || req.body.SETTINGS.THIRD_SELL.gain <= 0 || req.body.SETTINGS.THIRD_SELL.gain > 1
+      || typeof req.body.SETTINGS.THIRD_SELL.sell != 'number' || req.body.SETTINGS.THIRD_SELL.sell <= 0 || req.body.SETTINGS.THIRD_SELL.sell > 1
+      || typeof req.body.SETTINGS.FIRST_BUY.drop != 'number' || req.body.SETTINGS.FIRST_BUY.drop <= 0 || req.body.SETTINGS.FIRST_BUY.drop > 1
+      || typeof req.body.SETTINGS.FIRST_BUY.buy != 'number' || req.body.SETTINGS.FIRST_BUY.buy <= 0 || req.body.SETTINGS.FIRST_BUY.buy > 1
+      || typeof req.body.SETTINGS.SECOND_BUY.drop != 'number' || req.body.SETTINGS.SECOND_BUY.drop <= 0 || req.body.SETTINGS.SECOND_BUY.drop > 1
+      || typeof req.body.SETTINGS.SECOND_BUY.buy != 'number' || req.body.SETTINGS.SECOND_BUY.buy <= 0 || req.body.SETTINGS.SECOND_BUY.buy > 1)
+        return error('Invalid simulate request');
+
+    SETTINGS.REV_TOL = req.body.SETTINGS.REV_TOL;
+    SETTINGS.FIRST_SELL = req.body.SETTINGS.FIRST_SELL;
+    SETTINGS.SECOND_SELL = req.body.SETTINGS.SECOND_SELL;
+    SETTINGS.THIRD_SELL = req.body.SETTINGS.THIRD_SELL;
+    SETTINGS.FIRST_BUY = req.body.SETTINGS.FIRST_BUY;
+    SETTINGS.SECOND_BUY = req.body.SETTINGS.SECOND_BUY;
+
+    log_('Simulation with FIRST_BUY: ' + JSON.stringify(SETTINGS.FIRST_BUY) + ', SECOND_BUY: ' + JSON.stringify(SETTINGS.SECOND_BUY) + ', FIRST_SELL: ' + JSON.stringify(SETTINGS.FIRST_SELL) + ', SECOND_SELL: ' + JSON.stringify(SETTINGS.SECOND_SELL)
+        + ', THIRD_SELL: ' + JSON.stringify(SETTINGS.THIRD_SELL) + ', REV_TOL: ' + SETTINGS.REV_TOL);
+
+    var profiles = [],
+      count = Number(0);
+
+    markets.forEach((market, ind) => {
+        db.collection(market.name).find({}).sort({ time: 1 }).limit(1).toArray((err, arr) => {
+            if (err) return error(err);
+    
+            if (arr.length < 1) error('Missing data for simulation');
+
+            profiles[ind] = {
+                market: markets[ind],
+                price: arr[0].price,
+                vol: arr[0].vol,
+                vol_avg: arr[0].vol_avg,
+                prev_percent_change: 0,
+                can_buy: true,
+                local_min: false,
+                local_max: false
+            };
+
+            count++;
+            if (count === markets.length)
+                update_portfolio(profiles, (value) => {
+                    log_('Updating portfolio value to: ' + value);
+                });
+        });
+    });
 });
 
-function check_trade(stock_profile, desired_base) {
-    var percent_change = stock_profile.price / stock_profile.mean - 1,
-      low_volume = stock_profile.vol / stock_profile.vol_avg - 1 < SETTINGS.VOL_LOW;
+app.listen(4000);
+
+function check_trade(market_profile) {
+    var percent_change = market_profile.price / market_profile.mean - 1;
+
+    //reset local extrema (peak checks) when the price leaves the range for which they are checked
+    if (market_profile.local_min && (!can_buy || -percent_change <= SETTINGS.SECOND_BUY.drop)) market_profile.local_min = false;
+    if (market_profile.local_max && percent_change <= SETTINGS.THIRD_SELL.gain) market_profile.local_max = false;
+
+    if (market_profile.can_buy && market_profile.vol <= market_profile.vol_avg) {
+
+        if (-percent_change > SETTINGS.SECOND_BUY.drop) {
+        
+            if (!market_profile.local_min || -market_profile.prev_percent_change <= SETTINGS.SECOND_BUY.drop) //this is the first time buy peaks were tracked
+                market_profile.local_min = market_profile.price;
+            else { //been tracking buy peaks
+                if (market_profile.price < market_profile.local_min) market_profile.local_min = market_profile.price;
+        
+                if ((market_profile.price - market_profile.local_min) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped dropping
+                    buy(SETTINGS.SECOND_BUY.buy, 2, market_profile);
+                    market_profile.can_buy = false;
+                }
+            }
+        
+        } else if (-percent_change > SETTINGS.FIRST_BUY.drop && -market_profile.prev_percent_change <= SETTINGS.FIRST_BUY.drop) //crossed first buy line
+            buy(SETTINGS.FIRST_BUY.buy, 1, market_profile);
+    }
+
+    if (percent_change > SETTINGS.THIRD_SELL.gain) {
+
+        if (!market_profile.local_max || market_profile.prev_percent_change <= SETTINGS.THIRD_SELL.gain) //this is the first time sell peaks were tracked
+            market_profile.local_max = market_profile.price;
+        else { //been tracking sell peaks
+            if (market_profile.price > market_profile.local_max) market_profile.local_max = market_profile.price;
+        
+            if ((market_profile.local_max - market_profile.price) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped rising
+                sell(SETTINGS.THIRD_SELL.sell, 3, market_profile);
+                market_profile.local_max = false;
+                market_profile.can_buy = true;
+            }
+        }
+
+    } else if (percent_change > SETTINGS.SECOND_SELL.gain && market_profile.prev_percent_change <= SETTINGS.SECOND_SELL.gain) { //crossed second sell line
+        sell(SETTINGS.SECOND_SELL.sell, 2, market_profile);
+        market_profile.can_buy = true;
+    } else if (percent_change > SETTINGS.FIRST_SELL.gain && market_profile.prev_percent_change <= SETTINGS.FIRST_SELL.gain) { //crossed first sell line
+        sell(SETTINGS.FIRST_SELL.sell, 1, market_profile);
+        market_profile.can_buy = true;
+    }
+
+    market_profile.prev_percent_change = percent_change;
 }
 
-app.listen(4000);
+function buy(amount, num, market_profile) {
+
+
+    // if (market_profile.SIMULATION) {
+    //     market_profile.SIMULATION.sells.push({
+    //         x: market_profile.time,
+    //         y: 
+    //     });
+    // } else {
+
+    // }
+}
+
+function sell(amount, num, market_profile) {
+    if (market_profile.simulate) {
+
+    } else {
+
+    }
+}
+
+function update_portfolio(market_profiles, callback) {
+    if (!market_profiles || market_profiles.length != markets.length) return error('Invalid portfolio value calculation');
+
+    var val = Number(0),
+      loaded = Number(0),
+      balances = [];
+
+    exchanges.forEach((exchange, ind) => {
+        exchange.fetchBalance().then((data) => {
+            balances[ind] = data;
+            val += data.BTC.total;
+            loaded++;
+
+            if (loaded == exchanges.length) {
+                for (var i = 0; i < markets.length; i++) {
+                    var holding_in_alt = balances[market_profiles[i].market.exchange][market_profiles[i].market.name.split('/')[0]];
+                    market_profiles[i].holding = (holding_in_alt ? holding_in_alt.total : 0) * market_profiles[i].price;
+                    val += market_profiles[i].holding;
+                }
+                callback(val.valueOf());
+            }
+        });
+    });
+}
 
 function invalid_market_index(market_index) {
     return typeof market_index != 'number' || market_index < 0 || market_index >= markets.length;
@@ -130,7 +278,7 @@ function startup_bot() {
     load_historical_markets(() => {
         log_('Starting Bot');
         heart = heartbeats.createHeart(POLL_INTERVAL * 1000);
-        heart.createEvent(1, heartbeat);
+        // heart.createEvent(1, heartbeat);
     });
 }
 
@@ -170,7 +318,7 @@ function get_stats(collection, exchange, callback) {
 }
 
 function load_market(i, callback) {
-    const tick_interval = 'fiveMin';
+    const tick_interval = (FAST ? 'thirty' : 'five') + 'Min';
 
     request('https://bittrex.com/Api/v2.0/pub/market/GetTicks?marketName='
     + markets[i].name.split('/')[1] + '-' + markets[i].name.split('/')[0] + '&tickInterval=' + tick_interval, (err, res, body) => {
@@ -226,9 +374,8 @@ function load_market(i, callback) {
                     vol_ticks.add(time_s, item.BV);
             }
         });
-        vol_ticks.get();
 
-        log_(vol_ticks.data.length + ' Loaded market: ' + markets[i].name);
+        log_('Loaded market: ' + markets[i].name);
 
         callback();
     });
@@ -308,8 +455,8 @@ function new_market(name, exchange) {
 async function test() {
     //await exchanges[0].loadMarkets();
     console.log(await exchanges[0].fetchBalance());
-    console.log(exchanges[0].markets);
-    console.log(await exchanges[0].fetchTicker(markets[0].name));
+    //console.log(exchanges[0].markets);
+    //console.log(await exchanges[0].fetchTicker(markets[0].name));
 }
 
 function log_(msg) {
@@ -345,7 +492,7 @@ Moving_Average.prototype.add = function(time, vol) {
 }
 
 Moving_Average.prototype.get = function() {
-    if (this.data.length == 0) return;
+    if (this.data.length == 0) return error('Invalid moving average calculation');
 
     var since = this.data[this.data.length - 1].time;
 
