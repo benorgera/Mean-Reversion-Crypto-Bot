@@ -20,7 +20,7 @@ let ccxt = require('ccxt'),
     VOLUME_PERIOD: 60*60*24*7,
     VOLUME_HIGH: 0.37,
    // VOLUME_LOW: 0.06, if vol is within or below this percentage (+ or -), and price is low, buy (for now this is 0%)
-    REV_TOL: 0.05, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
+    REV_TOL: 0.065, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
     FIRST_SELL: {
         gain: 0.1,
         sell: 0.3
@@ -34,12 +34,12 @@ let ccxt = require('ccxt'),
         sell: 0.8  //sell at peak above gain
     },
     FIRST_BUY: {
-        drop: 0.15,
-        buy: 0.4 
+        drop: 0.12,
+        buy: 0.3 
     },
     SECOND_BUY: {
-        drop: 0.2,
-        buy: 0.6  //buy at peak below gain
+        drop: 0.15,
+        buy: 0.65  //buy at peak below gain
     }
   };
 
@@ -194,7 +194,8 @@ function ready_simulation_profiles(profiles, callback) {
                 vol_avg: arr[0].vol_avg,
                 holding: 0,
                 prev_percent_change: 0,
-                can_buy: true,
+                consecutive_stage_two_buys: 0,
+                consecutive_stage_one_buys: 0,
                 local_min: false,
                 local_max: false,
                 time: arr[0].time
@@ -211,10 +212,10 @@ function check_trade(market_profile, portfolio, trades) {
     var percent_change = market_profile.price / market_profile.mean - 1;
 
     //reset local extrema (peak checks) when the price leaves the range for which they are checked
-    if (market_profile.local_min && (!market_profile.can_buy || -percent_change <= SETTINGS.SECOND_BUY.drop)) market_profile.local_min = false;
+    if (market_profile.local_min && -percent_change <= SETTINGS.SECOND_BUY.drop) market_profile.local_min = false;
     if (market_profile.local_max && percent_change <= SETTINGS.THIRD_SELL.gain) market_profile.local_max = false;
 
-    if (market_profile.can_buy && market_profile.vol <= market_profile.vol_avg) {
+    if (market_profile.vol <= market_profile.vol_avg) {
 
         if (-percent_change > SETTINGS.SECOND_BUY.drop) {
         
@@ -223,14 +224,15 @@ function check_trade(market_profile, portfolio, trades) {
             else { //been tracking buy peaks
                 if (market_profile.price < market_profile.local_min) market_profile.local_min = market_profile.price;
         
-                if ((market_profile.price - market_profile.local_min) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped dropping
+                if (market_profile.consecutive_stage_two_buys < 1 && (market_profile.price - market_profile.local_min) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped dropping
                     buy(SETTINGS.SECOND_BUY.buy, 2, market_profile, portfolio, trades);
-                    market_profile.can_buy = false;
+                    market_profile.consecutive_stage_two_buys++;
                 }
             }
         
-        } else if (-percent_change > SETTINGS.FIRST_BUY.drop && -market_profile.prev_percent_change <= SETTINGS.FIRST_BUY.drop) { //crossed first buy line
+        } else if (market_profile.consecutive_stage_one_buys < 2 && -percent_change > SETTINGS.FIRST_BUY.drop && -market_profile.prev_percent_change <= SETTINGS.FIRST_BUY.drop) { //crossed first buy line
             buy(SETTINGS.FIRST_BUY.buy, 1, market_profile, portfolio, trades);
+            market_profile.consecutive_stage_one_buys++;
         }
     }
 
@@ -246,16 +248,19 @@ function check_trade(market_profile, portfolio, trades) {
             if ((market_profile.local_max - market_profile.price) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped rising
                 sell(SETTINGS.THIRD_SELL.sell, 3, market_profile, portfolio, trades);
                 market_profile.local_max = false;
-                market_profile.can_buy = true;
+                market_profile.consecutive_stage_two_buys = 0;
+                market_profile.consecutive_stage_one_buys = 0;
             }
         }
 
     } else if (percent_change > SETTINGS.SECOND_SELL.gain && market_profile.prev_percent_change <= SETTINGS.SECOND_SELL.gain) { //crossed second sell line
         sell(SETTINGS.SECOND_SELL.sell, 2, market_profile, portfolio, trades);
-        market_profile.can_buy = true;
+        market_profile.consecutive_stage_two_buys = 0;
+        market_profile.consecutive_stage_one_buys = 0;
     } else if (percent_change > SETTINGS.FIRST_SELL.gain && market_profile.prev_percent_change <= SETTINGS.FIRST_SELL.gain) { //crossed first sell line
         sell(SETTINGS.FIRST_SELL.sell, 1, market_profile, portfolio, trades);
-        market_profile.can_buy = true;
+        market_profile.consecutive_stage_two_buys = 0;
+        market_profile.consecutive_stage_one_buys = 0;
     }
 
     market_profile.prev_percent_change = percent_change;
