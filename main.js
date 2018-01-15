@@ -23,7 +23,7 @@ let ccxt = require('ccxt'),
     REV_TOL: 0.065, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
     FIRST_SELL: {
         gain: 0.1,
-        sell: 0.3
+        sell: 0.1
     },
     SECOND_SELL: {
         gain: 0.3,
@@ -34,7 +34,7 @@ let ccxt = require('ccxt'),
         sell: 0.8  //sell at peak above gain
     },
     FIRST_BUY: {
-        drop: 0.12,
+        drop: 0.1,
         buy: 0.3 
     },
     SECOND_BUY: {
@@ -194,8 +194,9 @@ function ready_simulation_profiles(profiles, callback) {
                 vol_avg: arr[0].vol_avg,
                 holding: 0,
                 prev_percent_change: 0,
-                consecutive_stage_two_buys: 0,
-                consecutive_stage_one_buys: 0,
+                consecutive_stage_two_buys: 0,  //limit 1
+                consecutive_stage_one_buys: 0,  //limit 2
+                consecutive_stage_one_sells: 0,  //limit 3
                 local_min: false,
                 local_max: false,
                 time: arr[0].time
@@ -227,12 +228,14 @@ function check_trade(market_profile, portfolio, trades) {
                 if (market_profile.consecutive_stage_two_buys < 1 && (market_profile.price - market_profile.local_min) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped dropping
                     buy(SETTINGS.SECOND_BUY.buy, 2, market_profile, portfolio, trades);
                     market_profile.consecutive_stage_two_buys++;
+                    market_profile.consecutive_stage_one_sells = 0;
                 }
             }
         
         } else if (market_profile.consecutive_stage_one_buys < 2 && -percent_change > SETTINGS.FIRST_BUY.drop && -market_profile.prev_percent_change <= SETTINGS.FIRST_BUY.drop) { //crossed first buy line
             buy(SETTINGS.FIRST_BUY.buy, 1, market_profile, portfolio, trades);
             market_profile.consecutive_stage_one_buys++;
+            market_profile.consecutive_stage_one_sells = 0;
         }
     }
 
@@ -250,6 +253,7 @@ function check_trade(market_profile, portfolio, trades) {
                 market_profile.local_max = false;
                 market_profile.consecutive_stage_two_buys = 0;
                 market_profile.consecutive_stage_one_buys = 0;
+                market_profile.consecutive_stage_one_sells = 0;
             }
         }
 
@@ -257,10 +261,12 @@ function check_trade(market_profile, portfolio, trades) {
         sell(SETTINGS.SECOND_SELL.sell, 2, market_profile, portfolio, trades);
         market_profile.consecutive_stage_two_buys = 0;
         market_profile.consecutive_stage_one_buys = 0;
-    } else if (percent_change > SETTINGS.FIRST_SELL.gain && market_profile.prev_percent_change <= SETTINGS.FIRST_SELL.gain) { //crossed first sell line
+        market_profile.consecutive_stage_one_sells = 0;
+    } else if (market_profile.consecutive_stage_one_sells < 3 && percent_change > SETTINGS.FIRST_SELL.gain && market_profile.prev_percent_change <= SETTINGS.FIRST_SELL.gain) { //crossed first sell line
         sell(SETTINGS.FIRST_SELL.sell, 1, market_profile, portfolio, trades);
         market_profile.consecutive_stage_two_buys = 0;
         market_profile.consecutive_stage_one_buys = 0;
+        market_profile.consecutive_stage_one_sells++;
     }
 
     market_profile.prev_percent_change = percent_change;
