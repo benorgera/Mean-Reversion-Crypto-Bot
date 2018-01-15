@@ -17,7 +17,7 @@ let ccxt = require('ccxt'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
   SETTINGS;
 
-set_settings(60*60*24*5, 60*60*24*7, 0.37, 0.065, 0.1, 0.1, 0.15, 0.65, 0.1, 0.1, 0.2, 0.3, 0.52, 1);
+set_settings(60*60*24*5, 60*60*24*7, 0.37, 0.065, 0.1, 0.1, 0.15, 0.65, 0.1, 0.1, 0.2, 0.3, 0.35, 1);
 
 const SIT = 0.3, //keep 30% in btc at all times
   MIN_CHANGE = 0.03, //at least 3% change before another trade
