@@ -295,7 +295,7 @@ function recalculate() {
     update_settings_object();
 
     post('/admin/recalc', JSON.stringify({ SETTINGS: SETTINGS, market_index: market_index }), (res) => {
-        config_c.data.datasets[1].data = JSON.parse(res);
+        config_c.data.datasets[config_c.data.datasets.length > 2 ? 3 : 1].data = JSON.parse(res);
         window.prices.update();
         document.getElementById('success').style.display = 'block';
         setTimeout(() => {

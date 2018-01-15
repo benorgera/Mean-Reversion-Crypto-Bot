@@ -15,42 +15,19 @@ let ccxt = require('ccxt'),
   exchanges = [],
   fs = require('fs'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
-  SETTINGS = {
-    MEAN_PERIOD: 60*60*24*5,
-    VOLUME_PERIOD: 60*60*24*7,
-    VOLUME_HIGH: 0.37,
-   // VOLUME_LOW: 0.06, if vol is within or below this percentage (+ or -), and price is low, buy (for now this is 0%)
-    REV_TOL: 0.065, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
-    FIRST_SELL: {
-        gain: 0.1,
-        sell: 0.1
-    },
-    SECOND_SELL: {
-        gain: 0.3,
-        sell: 0.5
-    },
-    THIRD_SELL: {
-        gain: 0.8,
-        sell: 0.8  //sell at peak above gain
-    },
-    FIRST_BUY: {
-        drop: 0.1,
-        buy: 0.3 
-    },
-    SECOND_BUY: {
-        drop: 0.15,
-        buy: 0.65  //buy at peak below gain
-    }
-  };
+  SETTINGS;
 
-const SIT = 0.3, //keep 30% in btc at all time
+set_settings(60*60*24*5, 60*60*24*7, 0.37, 0.065, 0.1, 0.1, 0.15, 0.65, 0.1, 0.1, 0.2, 0.3, 0.52, 1);
+
+const SIT = 0.3, //keep 30% in btc at all times
+  MIN_CHANGE = 0.03, //at least 3% change before another trade
   SIMULATON_PERIOD = 60*60*24*14,
   VOLUME_UNIT_INTERVAL = 60*60*24, //volume is stored over one day
   POLL_INTERVAL = 2,  //update once every 2 seconds
   EXCHANGES = {
     BITTREX: 0
   },
-  FAST = true,  //30 min tick interval is fastest
+  FAST = false,  //30 min tick interval is fastest
   EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ], //when data is polled, this is the volume unit returned
   EXCHANGES_FEES = [ 0.0025 ];
 
@@ -151,13 +128,14 @@ app.listen(4000);
 
 function simulate(profile, callback, trades) {
     var portfolio_start = 1,
-        portfolio = Number(portfolio_start);
+        portfolio = [ portfolio_start / (1 - SIT) ],
+        sitting = portfolio[0] - portfolio_start;
 
     db.collection(profile.market.name).find({}).sort({ time: 1 }).toArray((err, arr) => {
         if (err) return error(err);
 
         for (var i = 0; i < arr.length; i++) {
-            if (!arr[i].vol_unit || !arr[i].price || !arr[i].vol_avg) return error('Corrupt db entry: ' + JSON.stringify(item));
+            if (!arr[i].vol_unit || !arr[i].price || !arr[i].vol_avg || !arr[i].steady_mean) return error('Corrupt db entry: ' + JSON.stringify(item));
             
             profile.mean = arr[i].steady_mean;
             profile.vol = arr[i].vol_unit;
@@ -170,7 +148,7 @@ function simulate(profile, callback, trades) {
             if (i === arr.length - 1) {
                 var leftover = profile.holding * profile.price;
 
-                log_('Simulated market ' + profile.market.name + ' grew portfolio from ' + portfolio_start + ' to ' + (portfolio + leftover) + ' BTC (' + ((portfolio + leftover) / portfolio_start - 1) * 100 + '% growth, ' + (portfolio / (portfolio + leftover) * 100) + '% actually sold)');
+                log_('Simulated market ' + profile.market.name + ' grew portfolio from ' + portfolio_start + ' to ' + (portfolio[0] + leftover - sitting) + ' BTC (' + ((portfolio[0] + leftover - sitting) / portfolio_start - 1) * 100 + '% growth, ' + (portfolio[0] / (portfolio[0] + leftover) * 100) + '% actually sold)');
                 callback();
             }
         }
@@ -197,6 +175,7 @@ function ready_simulation_profiles(profiles, callback) {
                 consecutive_stage_two_buys: 0,  //limit 1
                 consecutive_stage_one_buys: 0,  //limit 2
                 consecutive_stage_one_sells: 0,  //limit 3
+                consecutive_stage_two_sells: 0, //limit 2
                 local_min: false,
                 local_max: false,
                 time: arr[0].time
@@ -254,18 +233,21 @@ function check_trade(market_profile, portfolio, trades) {
                 market_profile.consecutive_stage_two_buys = 0;
                 market_profile.consecutive_stage_one_buys = 0;
                 market_profile.consecutive_stage_one_sells = 0;
+                market_profile.consecutive_stage_two_sells = 0;
             }
         }
 
-    } else if (percent_change > SETTINGS.SECOND_SELL.gain && market_profile.prev_percent_change <= SETTINGS.SECOND_SELL.gain) { //crossed second sell line
+    } else if (market_profile.consecutive_stage_two_sells < 2 && percent_change > SETTINGS.SECOND_SELL.gain && market_profile.prev_percent_change <= SETTINGS.SECOND_SELL.gain) { //crossed second sell line
         sell(SETTINGS.SECOND_SELL.sell, 2, market_profile, portfolio, trades);
         market_profile.consecutive_stage_two_buys = 0;
         market_profile.consecutive_stage_one_buys = 0;
         market_profile.consecutive_stage_one_sells = 0;
+        market_profile.consecutive_stage_two_sells++;
     } else if (market_profile.consecutive_stage_one_sells < 3 && percent_change > SETTINGS.FIRST_SELL.gain && market_profile.prev_percent_change <= SETTINGS.FIRST_SELL.gain) { //crossed first sell line
         sell(SETTINGS.FIRST_SELL.sell, 1, market_profile, portfolio, trades);
         market_profile.consecutive_stage_two_buys = 0;
         market_profile.consecutive_stage_one_buys = 0;
+        market_profile.consecutive_stage_two_sells = 0;
         market_profile.consecutive_stage_one_sells++;
     }
 
@@ -274,12 +256,13 @@ function check_trade(market_profile, portfolio, trades) {
 
 function buy(percentage, num, market_profile, portfolio, trades) {
 
-    var base = percentage * (1 - SIT) * portfolio,  // divide by markets length to allocate a small percentage of portfolio to each stock
+    //amount in
+    var base = percentage * (1 - SIT) * portfolio[0],  // divide by markets length to allocate a small percentage of portfolio to each stock
       quote = base / market_profile.price;
 
     log_('Stage ' + num + ' buy of ' + base + ' worth of ' + market_profile.market.name + ' for ' + market_profile.price + ' BTC each');
 
-    portfolio -= base;
+    portfolio[0] -= base;
     market_profile.holding += quote * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
 
     if (trades && Array.isArray(trades.buys))
@@ -291,15 +274,15 @@ function buy(percentage, num, market_profile, portfolio, trades) {
 }
 
 function sell(percentage, num, market_profile, portfolio, trades) {
+
+    //amount in
     var quote = percentage * market_profile.holding,
       base = quote * market_profile.price;
 
     log_('Stage ' + num + ' sell of ' + base + ' worth of ' + market_profile.market.name + ' for ' + market_profile.price + ' BTC each');
 
     market_profile.holding -= quote;
-    portfolio += base * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
-
-    market_profile.last_sell_price = market_profile.price;
+    portfolio[0] += base * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
 
     if (trades && Array.isArray(trades.sells))
         trades.sells.push({
@@ -524,6 +507,35 @@ function get_debug_data(market_index, callback) {
     });
 }
 
+function set_settings(mean_period, volume_period, volume_high, rev_tol, b1_drop, b1_buy, b2_drop, b2_buy, s1_gain, s1_sell, s2_gain, s2_sell, s3_gain, s3_sell) {
+    SETTINGS = {
+        MEAN_PERIOD: mean_period,
+        VOLUME_PERIOD: volume_period,
+        VOLUME_HIGH: volume_high,
+        REV_TOL: rev_tol, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
+        FIRST_BUY: {
+            drop: b1_drop,
+            buy: b1_buy
+        },
+        SECOND_BUY: {
+            drop: b2_drop,
+            buy: b2_buy  //buy at peak below gain
+        },
+        FIRST_SELL: {
+            gain: s1_gain,
+            sell: s1_sell
+        },
+        SECOND_SELL: {
+            gain: s2_gain,
+            sell: s2_sell
+        },
+        THIRD_SELL: {
+            gain: s3_gain,
+            sell: s3_sell  //sell at peak above gain
+        }
+    };
+}
+
 function new_market(name, exchange) {
     var res = {};
     res.name = name;
@@ -585,3 +597,36 @@ Moving_Average.prototype.get = function() {
 
     return this.is_sum ? this.sum : this.sum / this.data.length;
 }
+
+/*
+
+
+  SETTINGS = {
+    MEAN_PERIOD: 60*60*24*5,
+    VOLUME_PERIOD: 60*60*24*7,
+    VOLUME_HIGH: 0.37,
+   // VOLUME_LOW: 0.06, if vol is within or below this percentage (+ or -), and price is low, buy (for now this is 0%)
+    REV_TOL: 0.065, //while looking for an up/down trend, a change of this amount or less in the wrong direction is acceptable
+    FIRST_SELL: {
+        gain: 0.1,
+        sell: 0.1
+    },
+    SECOND_SELL: {
+        gain: 0.3,
+        sell: 0.5
+    },
+    THIRD_SELL: {
+        gain: 0.8,
+        sell: 0.8  //sell at peak above gain
+    },
+    FIRST_BUY: {
+        drop: 0.1,
+        buy: 0.3 
+    },
+    SECOND_BUY: {
+        drop: 0.15,
+        buy: 0.65  //buy at peak below gain
+    }
+  };
+
+  */
