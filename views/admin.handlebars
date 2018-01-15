@@ -213,7 +213,70 @@ function simulate() {
     update_settings_object();
 
     post('/admin/simulate', JSON.stringify({ SETTINGS: SETTINGS, market_index: market_index }), (res) => {
+        res = JSON.parse(res);
+
         console.log(res);
+
+        if (config_c.data.datasets.length > 2) config_c.data.datasets.splice(0, 2);
+
+        Chart.plugins.register({
+            afterDatasetsDraw: function(chart, easing) {
+                // To only draw at the end of animation, check for easing === 1
+
+                chart.data.datasets.forEach(function (dataset, i) {
+                    var meta = chart.getDatasetMeta(i);
+                    if (!meta.hidden && dataset.data[0] && dataset.data[0].z && typeof dataset.data[0].z === 'number') {
+                        meta.data.forEach(function(element, index) {
+                            // Draw the text in black, with the specified font
+                            ctx.fillStyle = 'rgb(0, 0, 0)';
+
+                            var fontSize = 16;
+                            var fontStyle = 'normal';
+                            var fontFamily = 'Helvetica Neue';
+                            ctx.font = Chart.helpers.fontString(fontSize, fontStyle, fontFamily);
+
+                            // Just naively convert to string for now
+                            var dataString = precisionRound(dataset.data[index].z, 6);
+
+                            // Make sure alignment settings are correct
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+
+                            var padding = 5;
+                            var position = element.tooltipPosition();
+                            ctx.fillText(dataString, position.x, position.y - (fontSize / 2) - padding);
+                        });
+                    }
+                });
+            }
+        });
+
+
+        config_c.data.datasets.unshift({
+          showLine: false,
+          pointRadius: 5,
+          pointHoverRadius: 5,
+          pointHitRadius: 5,
+          label: 'Buys',
+          fill: false,
+          backgroundColor: '#FF0000',
+          borderColor: '#FF0000',
+          data: res.buys
+        });
+
+        config_c.data.datasets.unshift({
+          showLine: false,
+          pointRadius: 5,
+          pointHoverRadius: 5,
+          pointHitRadius: 5,
+          label: 'Sells',
+          fill: false,
+          backgroundColor: '#00FF00',
+          borderColor: '#00FF00',
+          data: res.sells
+        });
+
+        window.prices.update();
     });
 }
 
@@ -231,8 +294,6 @@ function post(endpoint, data, callback) {
 function recalculate() {
     update_settings_object();
 
-    console.log(SETTINGS);
-
     post('/admin/recalc', JSON.stringify({ SETTINGS: SETTINGS, market_index: market_index }), (res) => {
         config_c.data.datasets[1].data = JSON.parse(res);
         window.prices.update();
@@ -241,6 +302,12 @@ function recalculate() {
             document.getElementById('success').style.display = 'none';
         }, 2000);
     });
+}
+
+
+function precisionRound(number, precision) {
+  var factor = Math.pow(10, precision);
+  return Math.round(number * factor) / factor;
 }
 
 </script>

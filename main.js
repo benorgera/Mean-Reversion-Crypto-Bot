@@ -26,7 +26,7 @@ let ccxt = require('ccxt'),
         sell: 0.3
     },
     SECOND_SELL: {
-        gain: 0.5,
+        gain: 0.3,
         sell: 0.5
     },
     THIRD_SELL: {
@@ -38,12 +38,13 @@ let ccxt = require('ccxt'),
         buy: 0.4 
     },
     SECOND_BUY: {
-        drop: 0.25,
+        drop: 0.2,
         buy: 0.6  //buy at peak below gain
     }
   };
 
-const SIMULATON_PERIOD = 60*60*24*14,
+const SIT = 0.3, //keep 30% in btc at all time
+  SIMULATON_PERIOD = 60*60*24*14,
   VOLUME_UNIT_INTERVAL = 60*60*24, //volume is stored over one day
   POLL_INTERVAL = 2,  //update once every 2 seconds
   EXCHANGES = {
@@ -128,7 +129,56 @@ app.post('/admin/simulate', (req, res) => {
         + ', THIRD_SELL: ' + JSON.stringify(SETTINGS.THIRD_SELL) + ', REV_TOL: ' + SETTINGS.REV_TOL);
 
     var profiles = [],
-      count = Number(0);
+      trades_of_displayed_market = {
+        buys: [],
+        sells: []
+      };
+
+    ready_simulation_profiles(profiles, () => {
+        simulate(profiles[req.body.market_index], () => {
+            res.json(trades_of_displayed_market);
+        }, trades_of_displayed_market);
+
+        for (var i = 0; i < markets.length; i++)
+            if (i !== req.body.market_index) {
+                simulate(profiles[i], () => {});
+            }
+    });
+
+});
+
+app.listen(4000);
+
+function simulate(profile, callback, trades) {
+    var portfolio_start = 1,
+        portfolio = Number(portfolio_start);
+
+    db.collection(profile.market.name).find({}).sort({ time: 1 }).toArray((err, arr) => {
+        if (err) return error(err);
+
+        for (var i = 0; i < arr.length; i++) {
+            if (!arr[i].vol_unit || !arr[i].price || !arr[i].vol_avg) return error('Corrupt db entry: ' + JSON.stringify(item));
+            
+            profile.mean = arr[i].steady_mean;
+            profile.vol = arr[i].vol_unit;
+            profile.vol_avg = arr[i].vol_avg;
+            profile.price = arr[i].price;
+            profile.time = arr[i].time;
+
+            check_trade(profile, portfolio, trades);
+
+            if (i === arr.length - 1) {
+                var leftover = profile.holding * profile.price;
+
+                log_('Simulated market ' + profile.market.name + ' grew portfolio from ' + portfolio_start + ' to ' + (portfolio + leftover) + ' BTC (' + ((portfolio + leftover) / portfolio_start - 1) * 100 + '% growth, ' + (portfolio / (portfolio + leftover) * 100) + '% actually sold)');
+                callback();
+            }
+        }
+    });
+}
+
+function ready_simulation_profiles(profiles, callback) {
+    var count = 0;
 
     markets.forEach((market, ind) => {
         db.collection(market.name).find({}).sort({ time: 1 }).limit(1).toArray((err, arr) => {
@@ -139,30 +189,29 @@ app.post('/admin/simulate', (req, res) => {
             profiles[ind] = {
                 market: markets[ind],
                 price: arr[0].price,
-                vol: arr[0].vol,
+                mean: arr[0].steady_mean,
+                vol: arr[0].vol_unit,
                 vol_avg: arr[0].vol_avg,
+                holding: 0,
                 prev_percent_change: 0,
                 can_buy: true,
                 local_min: false,
-                local_max: false
+                local_max: false,
+                time: arr[0].time
             };
 
             count++;
-            if (count === markets.length)
-                update_portfolio(profiles, (value) => {
-                    log_('Updating portfolio value to: ' + value);
-                });
+            if (count == markets.length)
+                callback();
         });
     });
-});
+}
 
-app.listen(4000);
-
-function check_trade(market_profile) {
+function check_trade(market_profile, portfolio, trades) {
     var percent_change = market_profile.price / market_profile.mean - 1;
 
     //reset local extrema (peak checks) when the price leaves the range for which they are checked
-    if (market_profile.local_min && (!can_buy || -percent_change <= SETTINGS.SECOND_BUY.drop)) market_profile.local_min = false;
+    if (market_profile.local_min && (!market_profile.can_buy || -percent_change <= SETTINGS.SECOND_BUY.drop)) market_profile.local_min = false;
     if (market_profile.local_max && percent_change <= SETTINGS.THIRD_SELL.gain) market_profile.local_max = false;
 
     if (market_profile.can_buy && market_profile.vol <= market_profile.vol_avg) {
@@ -175,14 +224,17 @@ function check_trade(market_profile) {
                 if (market_profile.price < market_profile.local_min) market_profile.local_min = market_profile.price;
         
                 if ((market_profile.price - market_profile.local_min) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped dropping
-                    buy(SETTINGS.SECOND_BUY.buy, 2, market_profile);
+                    buy(SETTINGS.SECOND_BUY.buy, 2, market_profile, portfolio, trades);
                     market_profile.can_buy = false;
                 }
             }
         
-        } else if (-percent_change > SETTINGS.FIRST_BUY.drop && -market_profile.prev_percent_change <= SETTINGS.FIRST_BUY.drop) //crossed first buy line
-            buy(SETTINGS.FIRST_BUY.buy, 1, market_profile);
+        } else if (-percent_change > SETTINGS.FIRST_BUY.drop && -market_profile.prev_percent_change <= SETTINGS.FIRST_BUY.drop) { //crossed first buy line
+            buy(SETTINGS.FIRST_BUY.buy, 1, market_profile, portfolio, trades);
+        }
     }
+
+    if (market_profile.holding === 0) return;
 
     if (percent_change > SETTINGS.THIRD_SELL.gain) {
 
@@ -192,49 +244,65 @@ function check_trade(market_profile) {
             if (market_profile.price > market_profile.local_max) market_profile.local_max = market_profile.price;
         
             if ((market_profile.local_max - market_profile.price) / market_profile.mean > SETTINGS.REV_TOL) { //price stopped rising
-                sell(SETTINGS.THIRD_SELL.sell, 3, market_profile);
+                sell(SETTINGS.THIRD_SELL.sell, 3, market_profile, portfolio, trades);
                 market_profile.local_max = false;
                 market_profile.can_buy = true;
             }
         }
 
     } else if (percent_change > SETTINGS.SECOND_SELL.gain && market_profile.prev_percent_change <= SETTINGS.SECOND_SELL.gain) { //crossed second sell line
-        sell(SETTINGS.SECOND_SELL.sell, 2, market_profile);
+        sell(SETTINGS.SECOND_SELL.sell, 2, market_profile, portfolio, trades);
         market_profile.can_buy = true;
     } else if (percent_change > SETTINGS.FIRST_SELL.gain && market_profile.prev_percent_change <= SETTINGS.FIRST_SELL.gain) { //crossed first sell line
-        sell(SETTINGS.FIRST_SELL.sell, 1, market_profile);
+        sell(SETTINGS.FIRST_SELL.sell, 1, market_profile, portfolio, trades);
         market_profile.can_buy = true;
     }
 
     market_profile.prev_percent_change = percent_change;
 }
 
-function buy(amount, num, market_profile) {
+function buy(percentage, num, market_profile, portfolio, trades) {
 
+    var base = percentage * (1 - SIT) * portfolio,  // divide by markets length to allocate a small percentage of portfolio to each stock
+      quote = base / market_profile.price;
 
-    // if (market_profile.SIMULATION) {
-    //     market_profile.SIMULATION.sells.push({
-    //         x: market_profile.time,
-    //         y: 
-    //     });
-    // } else {
+    log_('Stage ' + num + ' buy of ' + base + ' worth of ' + market_profile.market.name + ' for ' + market_profile.price + ' BTC each');
 
-    // }
+    portfolio -= base;
+    market_profile.holding += quote * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
+
+    if (trades && Array.isArray(trades.buys))
+        trades.buys.push({
+            x: market_profile.time,
+            y: market_profile.price,
+            z: base
+        });
 }
 
-function sell(amount, num, market_profile) {
-    if (market_profile.simulate) {
+function sell(percentage, num, market_profile, portfolio, trades) {
+    var quote = percentage * market_profile.holding,
+      base = quote * market_profile.price;
 
-    } else {
+    log_('Stage ' + num + ' sell of ' + base + ' worth of ' + market_profile.market.name + ' for ' + market_profile.price + ' BTC each');
 
-    }
+    market_profile.holding -= quote;
+    portfolio += base * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
+
+    market_profile.last_sell_price = market_profile.price;
+
+    if (trades && Array.isArray(trades.sells))
+        trades.sells.push({
+            x: market_profile.time,
+            y: market_profile.price,
+            z: base
+        });
 }
 
 function update_portfolio(market_profiles, callback) {
     if (!market_profiles || market_profiles.length != markets.length) return error('Invalid portfolio value calculation');
 
-    var val = Number(0),
-      loaded = Number(0),
+    var val = 0,
+      loaded = 0,
       balances = [];
 
     exchanges.forEach((exchange, ind) => {
@@ -249,7 +317,7 @@ function update_portfolio(market_profiles, callback) {
                     market_profiles[i].holding = (holding_in_alt ? holding_in_alt.total : 0) * market_profiles[i].price;
                     val += market_profiles[i].holding;
                 }
-                callback(val.valueOf());
+                callback(val);
             }
         });
     });
