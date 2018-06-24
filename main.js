@@ -27,7 +27,7 @@ const SIT = 0.3, //keep 30% in btc at all times
   EXCHANGES = {
     BITTREX: 0
   },
-  FAST = false,  //30 min tick interval is fastest
+  FAST = true,  //30 min tick interval is fastest
   EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ], //when data is polled, this is the volume unit returned
   EXCHANGES_FEES = [ 0.0025 ];
 
@@ -263,7 +263,10 @@ function buy(percentage, num, market_profile, portfolio, trades) {
     log_('Stage ' + num + ' buy of ' + base + ' worth of ' + market_profile.market.name + ' for ' + market_profile.price + ' BTC each');
 
     portfolio[0] -= base;
-    market_profile.holding += quote * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
+    console.log(quote, portfolio[0]);
+
+    // market_profile.holding += quote * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
+    market_profile.holding += quote;
 
     if (trades && Array.isArray(trades.buys))
         trades.buys.push({
@@ -276,13 +279,18 @@ function buy(percentage, num, market_profile, portfolio, trades) {
 function sell(percentage, num, market_profile, portfolio, trades) {
 
     //amount in
-    var quote = percentage * market_profile.holding,
-      base = quote * market_profile.price;
+    console.log("percentage: "  + percentage);
+    console.log("holding: " + market_profile.holding);
+    var quote = percentage * market_profile.holding;
+    console.log("quote: " + quote);
+    console.log("price: " + market_profile.price);
+    var base = quote * market_profile.price;
 
     log_('Stage ' + num + ' sell of ' + base + ' worth of ' + market_profile.market.name + ' for ' + market_profile.price + ' BTC each');
 
     market_profile.holding -= quote;
-    portfolio[0] += base * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
+    portfolio[0] += base;
+    // portfolio[0] += base * (1 - EXCHANGES_FEES[market_profile.market.exchange]);
 
     if (trades && Array.isArray(trades.sells))
         trades.sells.push({
@@ -329,13 +337,25 @@ function startup_bot() {
         verbose: false
     }));
 
-    new_market('NEO/BTC', EXCHANGES.BITTREX);
-    new_market('ETH/BTC', EXCHANGES.BITTREX);
-    new_market('SC/BTC', EXCHANGES.BITTREX);
-    new_market('GNT/BTC', EXCHANGES.BITTREX);
-    new_market('STORJ/BTC', EXCHANGES.BITTREX);
-    new_market('DOPE/BTC', EXCHANGES.BITTREX);
-    new_market('MCO/BTC', EXCHANGES.BITTREX);
+    // new_market('NEO/BTC', EXCHANGES.BITTREX);
+    // new_market('ETH/BTC', EXCHANGES.BITTREX);
+    // new_market('SC/BTC', EXCHANGES.BITTREX);
+    // new_market('GNT/BTC', EXCHANGES.BITTREX);
+    // new_market('STORJ/BTC', EXCHANGES.BITTREX);
+    // new_market('DOPE/BTC', EXCHANGES.BITTREX);
+    // new_market('MCO/BTC', EXCHANGES.BITTREX);
+new_market("BTC/USDT");
+new_market("NBT/BTC" );
+new_market("ADA/BTC" );
+new_market("ETH/BTC" );
+new_market("ETH/USDT");
+new_market("NEO/BTC" );
+new_market("XRP/BTC" );
+new_market("XLM/BTC" );
+new_market("XRP/USDT");
+new_market("NEO/USDT");
+new_market("ENG/BTC");
+
 
     load_historical_markets(() => {
         log_('Starting Bot');
