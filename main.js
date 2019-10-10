@@ -8,7 +8,7 @@ let ccxt = require('ccxt'),
   heartbeats = require('heartbeats'),
   request = require('request'),
   mongo_client = require('mongodb').MongoClient,
-  url = 'mongodb://localhost:3000/algobot',
+  url = 'mongodb://127.0.0.1:3000/algobot',
   heart,
   db,
   markets = [],
@@ -17,7 +17,7 @@ let ccxt = require('ccxt'),
   log = new (require('log'))('debug', fs.createWriteStream(__dirname + '/logs/' + new Date() + '.log')),
   SETTINGS;
 
-set_settings(60*60*24*5, 60*60*24*7, 0.37, 0.065, 0.1, 0.1, 0.15, 0.65, 0.1, 0.1, 0.2, 0.3, 0.35, 1);
+set_settings(60*60*24*5, 60*60*24*7, 0.37, 0.065, 0.05, 0.1, 0.15, 0.65, 0.1, 0.1, 0.2, 0.3, 0.35, 1);
 
 const SIT = 0.3, //keep 30% in btc at all times
   MIN_CHANGE = 0.03, //at least 3% change before another trade
@@ -31,8 +31,11 @@ const SIT = 0.3, //keep 30% in btc at all times
   EXCHANGES_VOLUME_UNIT_INTERVALS = [ VOLUME_UNIT_INTERVAL ], //when data is polled, this is the volume unit returned
   EXCHANGES_FEES = [ 0.0025 ];
 
-mongo_client.connect(url, (err, data) => {
+mongo_client.connect(url, { useNewUrlParser: true }, (err, data) => {
     if (err) error(err);
+
+    console.log("data: ",data)
+    console.log("error:", err)
 
     log_('Database created');
     db = data.db('algobot');
@@ -195,7 +198,7 @@ function check_trade(market_profile, portfolio, trades) {
     if (market_profile.local_min && -percent_change <= SETTINGS.SECOND_BUY.drop) market_profile.local_min = false;
     if (market_profile.local_max && percent_change <= SETTINGS.THIRD_SELL.gain) market_profile.local_max = false;
 
-    if (market_profile.vol <= market_profile.vol_avg) {
+    if (market_profile.vol <= market_profile.vol_avg * (1 + SETTINGS.VOLUME_HIGH)) {
 
         if (-percent_change > SETTINGS.SECOND_BUY.drop) {
         
@@ -337,24 +340,21 @@ function startup_bot() {
         verbose: false
     }));
 
-    // new_market('NEO/BTC', EXCHANGES.BITTREX);
-    // new_market('ETH/BTC', EXCHANGES.BITTREX);
-    // new_market('SC/BTC', EXCHANGES.BITTREX);
-    // new_market('GNT/BTC', EXCHANGES.BITTREX);
-    // new_market('STORJ/BTC', EXCHANGES.BITTREX);
-    // new_market('DOPE/BTC', EXCHANGES.BITTREX);
-    // new_market('MCO/BTC', EXCHANGES.BITTREX);
-new_market("BTC/USDT");
-new_market("NBT/BTC" );
-new_market("ADA/BTC" );
-new_market("ETH/BTC" );
-new_market("ETH/USDT");
-new_market("NEO/BTC" );
-new_market("XRP/BTC" );
-new_market("XLM/BTC" );
-new_market("XRP/USDT");
-new_market("NEO/USDT");
-new_market("ENG/BTC");
+    new_market('NEO/BTC', EXCHANGES.BITTREX);
+    new_market('ETH/BTC', EXCHANGES.BITTREX);
+    new_market('SC/BTC', EXCHANGES.BITTREX);
+    new_market('GNT/BTC', EXCHANGES.BITTREX);
+    new_market("BTC/USDT");
+    new_market("ZEC/BTC");
+    new_market("ADA/BTC" );
+    new_market("ETH/BTC" );
+    new_market("ETH/USDT");
+    new_market("NEO/BTC" );
+    new_market("XRP/BTC" );
+    new_market("XLM/BTC" );
+    new_market("XRP/USDT");
+    new_market("NEO/USDT");
+    new_market("TUSD/BTC");
 
 
     load_historical_markets(() => {
@@ -649,4 +649,4 @@ Moving_Average.prototype.get = function() {
     }
   };
 
-  */
+  */ 

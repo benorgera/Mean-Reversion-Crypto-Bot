@@ -4,15 +4,15 @@
   "description": "Algorithmically trading altcoins since they were hyped up",
   "main": "main.js",
   "dependencies": {
-    "body-parser": "^1.18.2",
-    "ccxt": "^1.10.534",
-    "chartjs-node": "^1.6.0",
-    "express": "^4.16.2",
+    "body-parser": "^1.18.3",
+    "ccxt": "^1.18.23",
+    "chartjs-node": "^1.7.1",
+    "express": "^4.16.4",
     "express-handlebars": "^3.0.0",
     "heartbeats": "^5.0.1",
     "log": "^1.4.0",
-    "mongodb": "^3.0.1",
-    "request": "^2.83.0"
+    "mongodb": "^3.1.10",
+    "request": "^2.88.0"
   },
   "devDependencies": {},
   "scripts": {
